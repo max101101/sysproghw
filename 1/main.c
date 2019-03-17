@@ -1,12 +1,41 @@
+#define _XOPEN_SOURCE /* Mac compatibility. */
+#include <ucontext.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <limits.h>
+#include <signal.h>
+#include <sys/mman.h>
+
+#define STACK_SIZE 1024 * 1024
+
+#define handle_error(msg) \
+   do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
+static ucontext_t uctx_main;
+
+static void* allocate_stack()
+{
+	void *stack = malloc(STACK_SIZE);
+	stack_t ss;
+	ss.ss_sp = stack;
+	ss.ss_size = STACK_SIZE;
+	ss.ss_flags = 0;
+	sigaltstack(&ss, NULL);
+	return stack;
+}
 
 struct buffer{
 	int len;
 	int pos;
 	int* array;
+};
+
+struct context_data{
+	FILE* file;
+	struct buffer* buf;
+	ucontext_t uctx_my;
+	ucontext_t* uctx_next;
 };
 
 struct buffer* create_buffer(int len)
@@ -82,33 +111,40 @@ void quick_sort(int* a, int l, int r)
 	}
 }
 
-struct buffer* sort_file(FILE* f)
+void sort_file(struct context_data* data)
 {
 	int i;
 	int n = 0;
-	struct buffer* buf = create_buffer(128);
-	while(fscanf(f, "%d", &n) == 1){
-		buf = insert_buffer(buf, n);
+	while(fscanf(data->file, "%d", &n) == 1){
+		data->buf = insert_buffer(data->buf, n);
 	}
-	quick_sort(buf->array, 0, buf->pos - 1);
-	rewind(f);
-	for(i = 0; i < buf->pos; i++){
-		fprintf(f, "%d ", buf->array[i]);
+	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
+		handle_error("swapcontext");
+	quick_sort(data->buf->array, 0, data->buf->pos - 1);
+	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
+		handle_error("swapcontext");
+	rewind(data->file);
+	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
+		handle_error("swapcontext");
+	for(i = 0; i < data->buf->pos; i++){
+		fprintf(data->file, "%d ", data->buf->array[i]);
 	}
-	return buf;
+	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
+		handle_error("swapcontext");
+	fclose(data->file);
 }
 
-void merge_files(struct buffer* bufs[], int n, FILE* file)
+void merge_files(struct context_data data[], int n, FILE* file)
 {
 	for(;;){
 		int i;
 		int min = INT_MAX;
 		int flag = -1;
 		for(i = 0; i < n; i++){
-			if(bufs[i]->pos == 0){
+			if(data[i].buf->pos == 0){
 				continue;
 			}
-			int v = bufs[i]->array[0];
+			int v = data[i].buf->array[0];
 			if(min >= v){
 				min = v;
 				flag = i;
@@ -118,32 +154,57 @@ void merge_files(struct buffer* bufs[], int n, FILE* file)
 			break;
 		}
 		fprintf(file, "%d ", min);
-		bufs[flag]->array = &bufs[flag]->array[1];
-		bufs[flag]->pos--;
+		data[flag].buf->array = &data[flag].buf->array[1];
+		data[flag].buf->pos--;
 	}
 }
 
 int main(int argc, char** argv)
 {
+	if(argc < 2){
+		handle_error("no jobs");
+	}
 	int i;
 	srand(clock());
-	struct buffer* bufs[argc-1];
-	for(i = 1; i < argc; i++){
-		FILE* f = fopen(argv[i], "r+");
+	struct context_data data[argc-1];
+	//init uctx
+	for(i = 0; i < argc-1; i++){
+		FILE* f = fopen(argv[i+1], "r+");
 		if(f == NULL){
-			continue;
+			handle_error("file not opened");
 		}
-		bufs[i-1] = sort_file(f);
-		fclose(f);
+		data[i].file = f;
+		data[i].buf = create_buffer(128);
+		char* stack = allocate_stack();
+		if (getcontext(&data[i].uctx_my) == -1)
+			handle_error("getcontext");
+		data[i].uctx_my.uc_stack.ss_sp = stack;
+		data[i].uctx_my.uc_stack.ss_size = STACK_SIZE;
 	}
+	//uctx switch queue
+	for(i = 0; i < argc-1; i++){
+		if(i == argc - 2){
+			data[i].uctx_my.uc_link = &uctx_main;
+			data[i].uctx_next = &data[0].uctx_my;
+		}else{
+			data[i].uctx_my.uc_link = &data[i+1].uctx_my;
+			data[i].uctx_next = &data[i+1].uctx_my;
+		}
+		makecontext(&data[i].uctx_my, sort_file, 1, &data[i]);
+	}
+	//start uctx
+	if (swapcontext(&uctx_main, &data[0].uctx_my) == -1)
+		handle_error("swapcontext");
+	//merge
 	FILE* out = fopen("out.txt", "w");
 	if(out == NULL){
-		return 1;
+		handle_error("file not opened");
 	}
-	merge_files(bufs, argc-1, out);
+	merge_files(data, argc-1, out);
+	//end
 	fclose(out);
 	for(i = 0; i < argc-1; i++){
-		free_buffer(bufs[i]);
+		free_buffer(data[i].buf);
 	}
 	return 0;
 }
