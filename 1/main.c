@@ -228,7 +228,8 @@ void merge_files(struct context_data data[], int n, FILE* file)
 int main(int argc, char** argv)
 {
 	if(argc < 3){
-		handle_error("no jobs");
+		printf("no jobs to do\n");
+		return 0;
 	}
 	int i;
 	int coroutines_num = argc-2;
@@ -271,10 +272,13 @@ int main(int argc, char** argv)
 		free_buffer(data[i].buf);
 	}
 	//stat
-	printf("Time sum: %lu\n", clock()-start);
+	unsigned long result_time = clock()- start;
+	printf("Coroutine main time: %ld\n", result_time);
 	for(i = 0; i < coroutines_num; i++){
 		printf("Coroutine %d swaps: %d times, total time: %lu\n",
 			i, data[i].swap_count, data[i].time_work);
+		result_time += data[i].time_work;
 	}
+	printf("Total time: %ld\n", result_time);
 	return 0;
 }
