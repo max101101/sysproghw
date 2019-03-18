@@ -34,8 +34,10 @@ struct buffer{
 struct context_data{
 	FILE* file;
 	struct buffer* buf;
+	char finished;
+	unsigned long time_work;
+	unsigned long timestamp;
 	ucontext_t uctx_my;
-	ucontext_t* uctx_next;
 };
 
 struct buffer* create_buffer(int len)
@@ -74,6 +76,56 @@ struct buffer* insert_buffer(struct buffer* buf, int n)
 	return buf;
 }
 
+void terminate(struct context_data data[], int n, int size)
+{
+	int i;
+	data[n].finished = 1;
+	data[n].time_work += clock() - data[n].timestamp;
+	for(i = n+1; i < size; i++){
+		if(data[i].finished == 1){
+			continue;
+		}
+		data[n].uctx_my.uc_link = &data[i].uctx_my;
+		return;
+	}
+	for(i = 0; i < n; i++){
+		if(data[i].finished == 1){
+			continue;
+		}
+		data[n].uctx_my.uc_link = &data[i].uctx_my;
+		return;
+	}
+	data[n].uctx_my.uc_link = &uctx_main;
+}
+
+void swap(struct context_data data[], int n, int size)
+{
+	int i;
+	unsigned long time;
+	for(i = n+1; i < size; i++){
+		if(data[i].finished == 1){
+			continue;
+		}
+		data[n].time_work += clock() - data[n].timestamp;
+		if(swapcontext(&data[n].uctx_my, &data[i].uctx_my) == -1){
+			handle_error("swapcontext");
+		}
+		data[n].timestamp = clock();
+		return;
+	}
+	for(i = 0; i < n; i++){
+		if(data[i].finished == 1){
+			continue;
+		}
+		data[n].time_work += clock() - data[n].timestamp;
+		if(swapcontext(&data[n].uctx_my, &data[i].uctx_my) == -1){
+			handle_error("swapcontext");
+		}
+		data[n].timestamp = clock();
+		return;
+	}
+}
+
 int part(int* a, int l, int r)
 {
 	int v = rand()%(r+1-l) + l;
@@ -102,36 +154,39 @@ int part(int* a, int l, int r)
 	return j;
 }
 
-void quick_sort(int* a, int l, int r)
+void quick_sort(int* a, int l, int r, struct context_data data[], int n, int size)
 {
 	if(l<r){
 		int p = part(a, l, r);
-		quick_sort(a, l, p-1);
-		quick_sort(a, p+1, r);
+		swap(data, n, size);
+		quick_sort(a, l, p-1, data, n, size);
+		swap(data, n, size);
+		quick_sort(a, p+1, r, data, n, size);
+		swap(data, n, size);
 	}
 }
 
-void sort_file(struct context_data* data)
+void sort_file(struct context_data data[], int n, int size)
 {
 	int i;
-	int n = 0;
-	while(fscanf(data->file, "%d", &n) == 1){
-		data->buf = insert_buffer(data->buf, n);
+	int c = 0;
+	data[n].timestamp = clock();
+	while(fscanf(data[n].file, "%d", &c) == 1){
+		data[n].buf = insert_buffer(data[n].buf, c);
+		swap(data, n, size);
 	}
-	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
-		handle_error("swapcontext");
-	quick_sort(data->buf->array, 0, data->buf->pos - 1);
-	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
-		handle_error("swapcontext");
-	rewind(data->file);
-	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
-		handle_error("swapcontext");
-	for(i = 0; i < data->buf->pos; i++){
-		fprintf(data->file, "%d ", data->buf->array[i]);
+	swap(data, n, size);
+	quick_sort(data[n].buf->array, 0, data[n].buf->pos - 1, data, n, size);
+	swap(data, n, size);
+	rewind(data[n].file);
+	swap(data, n, size);
+	for(i = 0; i < data[n].buf->pos; i++){
+		fprintf(data[n].file, "%d ", data[n].buf->array[i]);
+		swap(data, n, size);
 	}
-	if (swapcontext(&data->uctx_my, data->uctx_next) == -1)
-		handle_error("swapcontext");
-	fclose(data->file);
+	swap(data, n, size);
+	fclose(data[n].file);
+	terminate(data, n , size);
 }
 
 void merge_files(struct context_data data[], int n, FILE* file)
@@ -165,7 +220,8 @@ int main(int argc, char** argv)
 		handle_error("no jobs");
 	}
 	int i;
-	srand(clock());
+	unsigned long start = clock();
+	srand(start);
 	struct context_data data[argc-1];
 	//init uctx
 	for(i = 0; i < argc-1; i++){
@@ -175,27 +231,21 @@ int main(int argc, char** argv)
 		}
 		data[i].file = f;
 		data[i].buf = create_buffer(128);
+		data[i].finished = 0;
+		data[i].time_work = 0;
 		char* stack = allocate_stack();
 		if (getcontext(&data[i].uctx_my) == -1)
 			handle_error("getcontext");
 		data[i].uctx_my.uc_stack.ss_sp = stack;
 		data[i].uctx_my.uc_stack.ss_size = STACK_SIZE;
 	}
-	//uctx switch queue
-	for(i = 0; i < argc-1; i++){
-		if(i == argc - 2){
-			data[i].uctx_my.uc_link = &uctx_main;
-			data[i].uctx_next = &data[0].uctx_my;
-		}else{
-			data[i].uctx_my.uc_link = &data[i+1].uctx_my;
-			data[i].uctx_next = &data[i+1].uctx_my;
-		}
-		makecontext(&data[i].uctx_my, sort_file, 1, &data[i]);
-	}
 	//start uctx
+	for(i = 0; i < argc-1; i++){
+		makecontext(&data[i].uctx_my, sort_file, 3, data, i, argc-1);
+	}
 	if (swapcontext(&uctx_main, &data[0].uctx_my) == -1)
 		handle_error("swapcontext");
-	//merge
+	//merge after end of uctx
 	FILE* out = fopen("out.txt", "w");
 	if(out == NULL){
 		handle_error("file not opened");
@@ -205,6 +255,11 @@ int main(int argc, char** argv)
 	fclose(out);
 	for(i = 0; i < argc-1; i++){
 		free_buffer(data[i].buf);
+	}
+	//stat
+	printf("Time sum: %lu\n", clock()-start);
+	for(i = 0; i < argc-1; i++){
+		printf("Time %d coroutine: %lu\n", i, data[i].time_work);
 	}
 	return 0;
 }
