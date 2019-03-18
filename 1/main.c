@@ -13,6 +13,7 @@
    do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 static ucontext_t uctx_main;
+static unsigned long timeslice;
 
 static void* allocate_stack()
 {
@@ -35,6 +36,7 @@ struct context_data{
 	FILE* file;
 	struct buffer* buf;
 	char finished;
+	int swap_count;
 	unsigned long time_work;
 	unsigned long timestamp;
 	ucontext_t uctx_my;
@@ -106,11 +108,15 @@ void swap(struct context_data data[], int n, int size)
 {
 	int i;
 	unsigned long time;
+	if(clock() - data[n].timestamp < timeslice){
+		return;
+	}
 	for(i = n+1; i < size; i++){
 		if(data[i].finished == 1){
 			continue;
 		}
 		data[n].time_work += clock() - data[n].timestamp;
+		data[n].swap_count++;
 		if(swapcontext(&data[n].uctx_my, &data[i].uctx_my) == -1){
 			handle_error("swapcontext");
 		}
@@ -122,6 +128,7 @@ void swap(struct context_data data[], int n, int size)
 			continue;
 		}
 		data[n].time_work += clock() - data[n].timestamp;
+		data[n].swap_count++;
 		if(swapcontext(&data[n].uctx_my, &data[i].uctx_my) == -1){
 			handle_error("swapcontext");
 		}
@@ -220,16 +227,18 @@ void merge_files(struct context_data data[], int n, FILE* file)
 
 int main(int argc, char** argv)
 {
-	if(argc < 2){
+	if(argc < 3){
 		handle_error("no jobs");
 	}
 	int i;
+	int coroutines_num = argc-2;
+	timeslice = atoi(argv[1])/coroutines_num;
 	unsigned long start = clock();
 	srand(start);
-	struct context_data data[argc-1];
+	struct context_data data[coroutines_num];
 	//init uctx
-	for(i = 0; i < argc-1; i++){
-		FILE* f = fopen(argv[i+1], "r+");
+	for(i = 0; i < coroutines_num; i++){
+		FILE* f = fopen(argv[i+2], "r+");
 		if(f == NULL){
 			handle_error("file not opened");
 		}
@@ -237,6 +246,7 @@ int main(int argc, char** argv)
 		data[i].buf = create_buffer(128);
 		data[i].finished = 0;
 		data[i].time_work = 0;
+		data[i].swap_count = 0;
 		char* stack = allocate_stack();
 		if (getcontext(&data[i].uctx_my) == -1)
 			handle_error("getcontext");
@@ -244,8 +254,8 @@ int main(int argc, char** argv)
 		data[i].uctx_my.uc_stack.ss_size = STACK_SIZE;
 	}
 	//start uctx
-	for(i = 0; i < argc-1; i++){
-		makecontext(&data[i].uctx_my, sort_file, 3, data, i, argc-1);
+	for(i = 0; i < coroutines_num; i++){
+		makecontext(&data[i].uctx_my, sort_file, 3, data, i, coroutines_num);
 	}
 	if (swapcontext(&uctx_main, &data[0].uctx_my) == -1)
 		handle_error("swapcontext");
@@ -254,16 +264,17 @@ int main(int argc, char** argv)
 	if(out == NULL){
 		handle_error("file not opened");
 	}
-	merge_files(data, argc-1, out);
+	merge_files(data, coroutines_num, out);
 	//end
 	fclose(out);
-	for(i = 0; i < argc-1; i++){
+	for(i = 0; i < coroutines_num; i++){
 		free_buffer(data[i].buf);
 	}
 	//stat
 	printf("Time sum: %lu\n", clock()-start);
-	for(i = 0; i < argc-1; i++){
-		printf("Time %d coroutine: %lu\n", i, data[i].time_work);
+	for(i = 0; i < coroutines_num; i++){
+		printf("Coroutine %d swaps: %d times, total time: %lu\n",
+			i, data[i].swap_count, data[i].time_work);
 	}
 	return 0;
 }
