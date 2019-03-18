@@ -76,6 +76,8 @@ struct buffer* insert_buffer(struct buffer* buf, int n)
 	return buf;
 }
 
+//set ucontext to swich after end of coroutine
+//track time
 void terminate(struct context_data data[], int n, int size)
 {
 	int i;
@@ -98,6 +100,8 @@ void terminate(struct context_data data[], int n, int size)
 	data[n].uctx_my.uc_link = &uctx_main;
 }
 
+//swap to first alive coroutine
+//track time
 void swap(struct context_data data[], int n, int size)
 {
 	int i;
