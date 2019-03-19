@@ -12,6 +12,8 @@
 #define handle_error(msg) \
    do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
+#define micro_secs(a) (1000000*a/CLOCKS_PER_SEC)
+
 static ucontext_t uctx_main;
 static unsigned long timeslice;
 
@@ -84,7 +86,7 @@ void terminate(struct context_data data[], int n, int size)
 {
 	int i;
 	data[n].finished = 1;
-	data[n].time_work += clock() - data[n].timestamp;
+	data[n].time_work += micro_secs(clock()) - data[n].timestamp;
 	for(i = n+1; i < size; i++){
 		if(data[i].finished == 1){
 			continue;
@@ -108,31 +110,31 @@ void swap(struct context_data data[], int n, int size)
 {
 	int i;
 	unsigned long time;
-	if(clock() - data[n].timestamp < timeslice){
+	if(micro_secs(clock()) - data[n].timestamp < timeslice){
 		return;
 	}
 	for(i = n+1; i < size; i++){
 		if(data[i].finished == 1){
 			continue;
 		}
-		data[n].time_work += clock() - data[n].timestamp;
+		data[n].time_work += micro_secs(clock()) - data[n].timestamp;
 		data[n].swap_count++;
 		if(swapcontext(&data[n].uctx_my, &data[i].uctx_my) == -1){
 			handle_error("swapcontext");
 		}
-		data[n].timestamp = clock();
+		data[n].timestamp = micro_secs(clock());
 		return;
 	}
 	for(i = 0; i < n; i++){
 		if(data[i].finished == 1){
 			continue;
 		}
-		data[n].time_work += clock() - data[n].timestamp;
+		data[n].time_work += micro_secs(clock()) - data[n].timestamp;
 		data[n].swap_count++;
 		if(swapcontext(&data[n].uctx_my, &data[i].uctx_my) == -1){
 			handle_error("swapcontext");
 		}
-		data[n].timestamp = clock();
+		data[n].timestamp = micro_secs(clock());
 		return;
 	}
 }
@@ -181,7 +183,7 @@ void sort_file(struct context_data data[], int n, int size)
 {
 	int i;
 	int c = 0;
-	data[n].timestamp = clock();
+	data[n].timestamp = micro_secs(clock());
 	while(fscanf(data[n].file, "%d", &c) == 1){
 		data[n].buf = insert_buffer(data[n].buf, c);
 		swap(data, n, size);
@@ -234,7 +236,7 @@ int main(int argc, char** argv)
 	int i;
 	int coroutines_num = argc-2;
 	timeslice = atoi(argv[1])/coroutines_num;
-	unsigned long start = clock();
+	unsigned long start = micro_secs(clock());
 	srand(start);
 	struct context_data data[coroutines_num];
 	//init uctx
@@ -272,7 +274,7 @@ int main(int argc, char** argv)
 		free_buffer(data[i].buf);
 	}
 	//stat
-	unsigned long result_time = clock()- start;
+	unsigned long result_time = micro_secs(clock())- start;
 	printf("Coroutine main time: %ld\n", result_time);
 	for(i = 0; i < coroutines_num; i++){
 		printf("Coroutine %d swaps: %d times, total time: %lu\n",
