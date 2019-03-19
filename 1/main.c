@@ -12,7 +12,7 @@
 #define handle_error(msg) \
    do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
-#define micro_secs(a) (1000000*a/CLOCKS_PER_SEC)
+#define micro_secs(a) (1000000*(a)/CLOCKS_PER_SEC)
 
 static ucontext_t uctx_main;
 static unsigned long timeslice;
