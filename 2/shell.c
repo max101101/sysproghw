@@ -203,6 +203,30 @@ char split_logic(struct list* head, struct list** tail)
 	return 0;
 }
 
+char check_pipe(struct list* p)
+{
+	if((strcmp(p->word, "|")) == 0 && (p->spec == 1)){
+		return 1;
+	}
+	return 0;
+}
+
+char split_pipeline(struct list* head, struct list** tail)
+{
+	if(head == NULL){
+		return -1;
+	}
+	while(head->next){
+		if(check_pipe(head->next)){
+			*tail = head->next->next;
+			head->next = NULL;
+			return 1;
+		}
+		head = head->next;
+	}
+	return 0;
+}
+
 int execute_pipeline(struct list* p)
 {
 	int s;
