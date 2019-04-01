@@ -94,15 +94,15 @@ int len_list(struct list* p)
 
 int death_analys(int s, int pid)
 {
-	int code;
+	int exit_code;
 	if(WIFEXITED(s)){
-		code = WEXITSTATUS(s);
-		printf("Process %d finished with %d\n", pid, code);
+		exit_code = WEXITSTATUS(s);
+		printf("Process %d finished with %d\n", pid, exit_code);
 	}else{
-		code = 1;
+		exit_code = 1;
 		printf("Process %d killed by %d\n", pid, WTERMSIG(s));
 	}
-	return code;
+	return exit_code;
 }
 
 void kill_zombie()
@@ -165,15 +165,86 @@ char check_block(struct list* p)
 	return 1;
 }
 
+char check_or(struct list* p)
+{
+	if((strcmp(p->word, "|")) == 0 && (p->spec == 1) && (p->next) &&
+		(strcmp(p->next->word, "|") == 0) && (p->next->spec == 1)){
+		return 1;
+	}
+	return 0;
+}
+
+char check_and(struct list* p)
+{
+	if((strcmp(p->word, "&")) == 0 && (p->spec == 1) && (p->next) &&
+		(strcmp(p->next->word, "&") == 0) && (p->next->spec == 1)){
+		return 1;
+	}
+	return 0;
+}
+
+char split_logic(struct list* head, struct list** tail)
+{
+	if(head == NULL){
+		return -1;
+	}
+	while(head->next){
+		if(check_or(head->next)){
+			*tail = head->next->next->next;
+			head->next = NULL;
+			return 1;
+		}else if(check_and(head->next)){
+			*tail = head->next->next->next;
+			head->next = NULL;
+			return 2;
+		}
+		head = head->next;
+	}
+	return 0;
+}
+
+int execute_pipeline(struct list* p)
+{
+	int s;
+	if(!fork()){
+		char** argv = create_argv(p);
+		execvp(argv[0], argv);
+		perror("execvp");
+		exit(EXIT_FAILURE);
+	}
+	wait(&s);
+	return WIFEXITED(s) ? WEXITSTATUS(s) : 1;
+}
+
+int execute_logic(struct list* p)
+{
+	struct list* tail = NULL;
+	char flag;
+	int exit_code = 0;
+	while((flag = split_logic(p, &tail)) != -1){
+		exit_code = execute_pipeline(p);
+		if(flag == 0){
+			break;
+		}
+		if((flag == 1) && (exit_code == 0)){
+				break;
+		}
+		if((flag == 2) && (exit_code != 0)){
+				break;
+		}
+		p = tail;
+		tail = NULL;
+	}
+	return exit_code;
+}
+
 void execute(struct list* p)
 {
 	int pid;
 	char block = check_block(p);
 	if((pid = fork()) == 0){
-		char** argv = create_argv(p);
-		execvp(argv[0], argv);
-		perror("execvp");
-		exit(EXIT_FAILURE);
+		int exit_code = execute_logic(p);
+		exit(exit_code);
 	}
 	if(pid == -1){
 		perror("fork");
