@@ -92,10 +92,32 @@ int len_list(struct list* p)
 	return i;
 }
 
+int death_analys(int s, int pid)
+{
+	int code;
+	if(WIFEXITED(s)){
+		code = WEXITSTATUS(s);
+		printf("Process %d finished with %d\n", pid, code);
+	}else{
+		code = 1;
+		printf("Process %d killed by %d\n", pid, WTERMSIG(s));
+	}
+	return code;
+}
+
+void kill_zombie()
+{
+	int pid;
+	int s;
+	while((pid = waitpid(-1, &s, WNOHANG)) > 0){
+		death_analys(s, pid);
+	}
+}
+
 char** create_argv(struct list* p)
 {
 	int i;
-	int len = len_list(p);	
+	int len = len_list(p);
 	char** argv = (char**)malloc((len+1) * sizeof(char*));
 	for(i = 0; i < len; i++){
 		argv[i] = p->word;
@@ -105,14 +127,64 @@ char** create_argv(struct list* p)
 	return argv;
 }
 
+struct list* strip_comment(struct list* p)
+{
+	struct list* first = p;
+	if(p == NULL){
+		return NULL;
+	}
+	if(p->word[0] == '#'){
+		free_list(p);
+		return NULL;
+	}
+	while(p->next){
+		if(p->next->word[0] == '#'){
+			free_list(p->next);
+			p->next = NULL;
+			return first;
+		}
+		p = p->next;
+	}
+	return first;
+}
+
+char check_block(struct list* p)
+{
+	if(p == NULL || p->next == NULL){
+		return 1;
+	}
+	while(p->next->next){
+		p = p->next;
+	}
+	if((strcmp(p->next->word, "&") == 0) && (p->next->spec == 1)){
+		free(p->next->word);
+		free(p->next);
+		p->next = NULL;
+		return 0;
+	}
+	return 1;
+}
+
 void execute(struct list* p)
 {
-	if(!fork()){
+	int pid;
+	char block = check_block(p);
+	if((pid = fork()) == 0){
 		char** argv = create_argv(p);
 		execvp(argv[0], argv);
+		perror("execvp");
 		exit(EXIT_FAILURE);
 	}
-	wait(NULL);
+	if(pid == -1){
+		perror("fork");
+		return;
+	}
+	if(block){
+		waitpid(pid, NULL, 0);
+	}else{
+		printf("Process %d started\n", pid);
+	}
+	kill_zombie();
 }
 
 char need_ecr(char c)
@@ -192,7 +264,10 @@ int main()
 				last = insert_list(last, buf, 1);
 			}
 			if(c == '\n'){
-				execute(first);
+				first = strip_comment(first);
+				if(first){
+					execute(first);
+				}
 				first = free_list(first);
 				last = &first;
 				printf(">");
