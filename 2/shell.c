@@ -227,17 +227,78 @@ char split_pipeline(struct list* head, struct list** tail)
 	return 0;
 }
 
+void dup_pipe(int fd[])
+{
+	if(fd[0] != -1){
+		dup2(fd[0], 0);
+	}
+	if(fd[3] != -1){
+		dup2(fd[3], 1);
+	}
+}
+
+void close_pipe_fork(int fd[])
+{
+	if(fd[1] != -1){
+		close(fd[1]);
+	}
+	if(fd[2] != -1){
+		close(fd[2]);
+	}
+}
+
+void close_pipe_main(int fd[])
+{
+	if(fd[0] != -1){
+		close(fd[0]);
+	}
+	if(fd[1] != -1){
+		close(fd[1]);
+	}
+}
+
+void prepare_fd(int fd[])
+{
+	fd[0] = fd[2];
+	fd[1] = fd[3];
+	fd[2] = -1;
+	fd[3] = -1;
+}
+
 int execute_pipeline(struct list* p)
 {
 	int s;
-	if(!fork()){
-		char** argv = create_argv(p);
-		execvp(argv[0], argv);
-		perror("execvp");
-		exit(EXIT_FAILURE);
+	int i;
+	struct list* tail = NULL;
+	int last_pid = -1;
+	int last_exit_code = 1;
+	int fork_counter = 0;
+	int fd[4] = {-1,-1,-1,-1};
+	char flag;
+	while((flag = split_pipeline(p, &tail)) != -1){
+		if(flag != 0){
+			pipe(&(fd[2]));
+		}
+		if((last_pid = fork()) == 0){
+			char** argv = create_argv(p);
+			dup_pipe(fd);
+			close_pipe_fork(fd);
+			execvp(argv[0], argv);
+			perror("execvp");
+			exit(EXIT_FAILURE);
+		}
+		close_pipe_main(fd);
+		prepare_fd(fd);
+		fork_counter++;
+		p = tail;
+		tail = NULL;
 	}
-	wait(&s);
-	return WIFEXITED(s) ? WEXITSTATUS(s) : 1;
+	for(i = 0; i < fork_counter; i++){
+		if(wait(&s) == last_pid){
+			last_exit_code = WIFEXITED(s) ? WEXITSTATUS(s) : 1;
+		}
+	}
+	return last_exit_code;
 }
 
 int execute_logic(struct list* p)
