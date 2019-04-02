@@ -388,17 +388,25 @@ int execute_logic(struct list* p)
 			break;
 		}
 		if((flag == 1) && (exit_code == 0)){
+			char check = -2;
 			p = tail;
 			tail = NULL;
-			split_logic(p, &tail);
+			while(check != -1 && check != 2){
+				check = split_logic(p, &tail);
+				p = tail;
+				tail = NULL;
+			}
 		}
 		if((flag == 2) && (exit_code != 0)){
+			char check = -2;
 			p = tail;
 			tail = NULL;
-			split_logic(p, &tail);
+			while(check != -1 && check != 1){
+				check = split_logic(p, &tail);
+				p = tail;
+				tail = NULL;
+			}
 		}
-		p = tail;
-		tail = NULL;
 	}
 	return exit_code;
 }
