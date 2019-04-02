@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 struct buffer{
 	int len;
@@ -231,9 +232,11 @@ void dup_pipe(int fd[])
 {
 	if(fd[0] != -1){
 		dup2(fd[0], 0);
+		close(fd[0]);
 	}
 	if(fd[3] != -1){
 		dup2(fd[3], 1);
+		close(fd[3]);
 	}
 }
 
@@ -265,6 +268,77 @@ void prepare_fd(int fd[])
 	fd[3] = -1;
 }
 
+char check_append(struct list* p)
+{
+	if(p == NULL){
+		return 0;
+	}
+	if((strcmp(p->word, ">")) == 0 && (p->spec == 1) && (p->next) &&
+		(strcmp(p->next->word, ">") == 0) && (p->next->spec == 1) &&
+		(p->next->next) && (p->next->next->spec == 0)){
+		return 1;
+	}
+	return 0;
+}
+
+char check_write(struct list* p)
+{
+	if(p == NULL){
+		return 0;
+	}
+	if((strcmp(p->word, ">")) == 0 && (p->spec == 1) &&
+		(p->next) && (p->next->spec == 0)){
+		return 1;
+	}
+	return 0;
+}
+
+char check_read(struct list* p)
+{
+	if(p == NULL){
+		return 0;
+	}
+	if((strcmp(p->word, "<")) == 0 && (p->spec == 1) &&
+		(p->next) && (p->next->spec == 0)){
+		return 1;
+	}
+	return 0;
+}
+
+void open_files(struct list* head)
+{
+	if(head == NULL){
+		return;
+	}
+	while(head->next){
+		if(check_append(head->next)){
+			struct list* tmp = head->next->next->next;
+			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_APPEND, 0666);
+			dup2(fd, 1);
+			close(fd);
+			head->next = tmp->next;
+		}
+		if(check_write(head->next)){
+			struct list* tmp = head->next->next;
+			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+			dup2(fd, 1);
+			close(fd);
+			head->next = tmp->next;
+		}
+		if(check_read(head->next)){
+			struct list* tmp = head->next->next;
+			int fd = open(tmp->word, O_RDONLY);
+			dup2(fd, 0);
+			close(fd);
+			head->next = tmp->next;
+		}
+		head = head->next;
+		if(head == NULL){
+			return;
+		}
+	}
+}
+
 int execute_pipeline(struct list* p)
 {
 	int s;
@@ -280,9 +354,11 @@ int execute_pipeline(struct list* p)
 			pipe(&(fd[2]));
 		}
 		if((last_pid = fork()) == 0){
-			char** argv = create_argv(p);
+			char** argv;
 			dup_pipe(fd);
 			close_pipe_fork(fd);
+			open_files(p);
+			argv = create_argv(p);
 			execvp(argv[0], argv);
 			perror("execvp");
 			exit(EXIT_FAILURE);
@@ -312,10 +388,14 @@ int execute_logic(struct list* p)
 			break;
 		}
 		if((flag == 1) && (exit_code == 0)){
-				break;
+			p = tail;
+			tail = NULL;
+			split_logic(p, &tail);
 		}
 		if((flag == 2) && (exit_code != 0)){
-				break;
+			p = tail;
+			tail = NULL;
+			split_logic(p, &tail);
 		}
 		p = tail;
 		tail = NULL;
@@ -323,10 +403,25 @@ int execute_logic(struct list* p)
 	return exit_code;
 }
 
+char execute_cd(struct list* p)
+{
+	if(strcmp(p->word, "cd") == 0){
+		if((p->next) && (p->next->spec == 0)){
+			chdir(p->next->word);
+		}
+		return 1;
+	}
+	return 0;
+}
+
+
 void execute(struct list* p)
 {
 	int pid;
 	char block = check_block(p);
+	if(execute_cd(p)){
+		return;
+	}
 	if((pid = fork()) == 0){
 		int exit_code = execute_logic(p);
 		exit(exit_code);
@@ -376,13 +471,15 @@ int main()
 	char flag_d = 0;
 	char flag_o = 0;
 	char flag_e = 0;
-	printf(">");
+	printf("$>");
 	while((c = getchar()) != EOF){
 		if(flag_e){
 			if(!need_ecr(c)){
 				buf = insert_buffer(buf, '\\');
 			}
-			buf = insert_buffer(buf, c);
+			if(c != '\n'){
+				buf = insert_buffer(buf, c);
+			}
 			flag_e = 0;
 			continue;
 		}
@@ -426,7 +523,7 @@ int main()
 				}
 				first = free_list(first);
 				last = &first;
-				printf(">");
+				printf("$>");
 			}
 			break;
 		default:
