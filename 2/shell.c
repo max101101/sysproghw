@@ -342,14 +342,16 @@ void open_files(struct list* head)
 	while(head->next){
 		if(check_append(head->next)){
 			struct list* tmp = head->next->next->next;
-			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_APPEND, S_IRWXU);
+			int fd = open(tmp->word,
+				O_WRONLY|O_CREAT|O_APPEND, S_IRWXU);
 			dup2(fd, 1);
 			close(fd);
 			head->next = tmp->next;
 		}
 		if(check_write(head->next)){
 			struct list* tmp = head->next->next;
-			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_TRUNC, S_IRWXU);
+			int fd = open(tmp->word,
+				O_WRONLY|O_CREAT|O_TRUNC, S_IRWXU);
 			dup2(fd, 1);
 			close(fd);
 			head->next = tmp->next;
@@ -424,13 +426,15 @@ int execute_logic(struct list* p)
 			break;
 		}
 		if((logic_op == LOGIC_OR) && (exit_code == 0)){
-			while(logic_op != LOGIC_EMPTY && logic_op != LOGIC_AND){
+			while(logic_op != LOGIC_EMPTY &&
+				logic_op != LOGIC_AND){
 				p = tail;
 				tail = NULL;
 				logic_op = split_logic(p, &tail);
 			}
 		}else if((logic_op == LOGIC_AND) && (exit_code != 0)){
-			while(logic_op != LOGIC_EMPTY && logic_op != LOGIC_OR){
+			while(logic_op != LOGIC_EMPTY &&
+				logic_op != LOGIC_OR){
 				p = tail;
 				tail = NULL;
 				logic_op = split_logic(p, &tail);
@@ -558,9 +562,11 @@ int main()
 				buf->pos = 1;
 				buf->array[0] = c;
 				if(is_prev_spec){
-					insert_list(&list, buf, SPEC_SECOND);
+					insert_list(&list, buf,
+						SPEC_SECOND);
 				}else{
-					insert_list(&list, buf, SPEC_FIRST);
+					insert_list(&list, buf,
+						SPEC_FIRST);
 				}
 				is_prev_spec = 1;
 			}else{
