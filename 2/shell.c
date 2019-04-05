@@ -183,7 +183,8 @@ bool check_block(struct head_list* list)
 	if((list->last == NULL) || (list->first == list->last)){
 		return 1;
 	}
-	if((strcmp(list->last->word, "&") == 0) && (list->last->spec == SPEC_FIRST)){
+	if((strcmp(list->last->word, "&") == 0) &&
+		(list->last->spec == SPEC_FIRST)){
 		struct list* tmp = list->first;
 		while(tmp->next != list->last){
 			tmp = tmp->next;
@@ -197,8 +198,9 @@ bool check_block(struct head_list* list)
 
 char check_or(struct list* p)
 {
-	if((strcmp(p->word, "|")) == 0 && (p->spec == SPEC_FIRST) && (p->next) &&
-		(strcmp(p->next->word, "|") == 0) && (p->next->spec == SPEC_SECOND)){
+	if((strcmp(p->word, "|")) == 0 && (p->spec == SPEC_FIRST) &&
+		(p->next) && (strcmp(p->next->word, "|") == 0) &&
+		(p->next->spec == SPEC_SECOND)){
 		return 1;
 	}
 	return 0;
@@ -206,8 +208,9 @@ char check_or(struct list* p)
 
 char check_and(struct list* p)
 {
-	if((strcmp(p->word, "&")) == 0 && (p->spec == SPEC_FIRST) && (p->next) &&
-		(strcmp(p->next->word, "&") == 0) && (p->next->spec == SPEC_SECOND)){
+	if((strcmp(p->word, "&")) == 0 && (p->spec == SPEC_FIRST) &&
+		(p->next) && (strcmp(p->next->word, "&") == 0) &&
+		(p->next->spec == SPEC_SECOND)){
 		return 1;
 	}
 	return 0;
@@ -298,8 +301,9 @@ char check_append(struct list* p)
 	if(p == NULL){
 		return 0;
 	}
-	if((strcmp(p->word, ">")) == 0 && (p->spec == SPEC_FIRST) && (p->next) &&
-		(strcmp(p->next->word, ">") == 0) && (p->next->spec == SPEC_SECOND) &&
+	if((strcmp(p->word, ">")) == 0 && (p->spec == SPEC_FIRST) &&
+		(p->next) && (strcmp(p->next->word, ">") == 0) &&
+		(p->next->spec == SPEC_SECOND) &&
 		(p->next->next) && (p->next->next->spec == SPEC_DEFAULT)){
 		return 1;
 	}
@@ -395,6 +399,7 @@ int execute_pipeline(struct list* p)
 			perror("execvp");
 			exit(EXIT_FAILURE);
 		}
+		printf("execute %s\n");
 		prepare_fd(fd);
 		fork_counter++;
 		p = tail;
