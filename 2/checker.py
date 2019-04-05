@@ -34,12 +34,24 @@ tests = [
 "cat \"my file with whitespaces in name.txt\"",
 "echo 'truncate' > \"my file with whitespaces in name.txt\"",
 "cat \"my file with whitespaces in name.txt\"",
-"echo \"test 'test'' \\\" >> \"my file with whitespaces in name.txt\"",
+"echo \"test 'test'' \\\\\" >> \"my file with whitespaces in name.txt\"",
 "cat \"my file with whitespaces in name.txt\""
 ],
 [
 "# Comment",
 "echo 123\\\n456",
+],
+[
+"rm my\\ file\\ with\\ whitespaces\\ in\\ name.txt",
+"echo 123 | grep 2",
+"echo 123\\\n456\\\n| grep 2",
+"echo \"123\n456\n7\n\" | grep 4",
+"echo 'source string' | sed 's/source/destination/g'",
+"echo 'source string' | sed 's/source/destination/g' | sed 's/string/value/g'",
+"echo 'source string' |\\\nsed 's/source/destination/g'\\\n| sed 's/string/value/g'",
+"echo 'test' | exit 123 | grep 'test2'",
+"echo 'source string' | sed 's/source/destination/g' | sed 's/string/value/g' > result.txt",
+"cat result.txt",
 ],
 [
 "false && echo 123",
@@ -57,14 +69,19 @@ def finish(code):
 prefix = '--------------------------------'
 command = ''
 for section_i, section in enumerate(tests, 1):
-	if section_i == 4 and args.max == 15:
+	if section_i == 5 and args.max == 15:
 		break
 	command += 'echo "{}Section {}"\n'.format(prefix, section_i)
 	for test_i, test in enumerate(section, 1):
-		command += 'echo "$> {}"\n'.format(test)
+		command += 'echo "$> Test {}"\n'.format(test_i)
 		command += '{}\n'.format(test)
 
-output = p.communicate(command.encode())[0].decode()
+try:
+	output = p.communicate(command.encode(), 3)[0].decode()
+except subprocess.TimeoutExpired:
+	print('Too long no output. Probably you forgot to process EOF')
+	finish(-1)
+
 if args.t:
 	print(output)
 	finish(0)
