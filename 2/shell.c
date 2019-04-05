@@ -384,6 +384,13 @@ int execute_pipeline(struct list* p)
 			close_pipe_fork(fd);
 			open_files(p);
 			argv = create_argv(p);
+			if(strcmp(argv[0], "exit") == 0){
+				int exit_code = 0;
+				if(argv[1]){
+					exit_code = atoi(argv[1]);
+				}
+				exit(exit_code);
+			}
 			execvp(argv[0], argv);
 			perror("execvp");
 			exit(EXIT_FAILURE);
@@ -569,6 +576,5 @@ int main()
 			is_prev_spec = 0;
 		}
 	}
-	printf("\n");
 	return 0;
 }
