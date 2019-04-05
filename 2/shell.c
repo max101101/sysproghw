@@ -3,6 +3,26 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdbool.h>
+
+enum spec_value{
+	SPEC_DEFAULT,
+	SPEC_FIRST,
+	SPEC_SECOND
+};
+
+enum logic_value{
+	LOGIC_LAST,
+	LOGIC_AND,
+	LOGIC_OR,
+	LOGIC_EMPTY
+};
+
+enum pipe_value{
+	PIPE_EMPTY,
+	PIPE_LAST,
+	PIPE_DEFAULT
+};
 
 struct buffer{
 	int len;
@@ -46,33 +66,41 @@ struct buffer* insert_buffer(struct buffer* buf, int n)
 	return buf;
 }
 
+struct head_list{
+	struct list* first;
+	struct list* last;
+};
+
 struct list{
 	char* word;
-	char spec;
+	int spec;
 	struct list* next;
 };
 
-struct list** insert_list(struct list** last, struct buffer* b, char spec)
+void insert_list(struct head_list* list, struct buffer* b, int spec)
 {
 	int i;
 	struct list* p;
 	if(b->pos == 0){
-		return last;
+		return;
 	}
-	*last = (struct list*)malloc(sizeof(struct list));
-	p = *last;
+	p = (struct list*)malloc(sizeof(struct list));
 	p->word = (char*)malloc((b->pos+1) * sizeof(char));
-	for(i = 0; i < b->pos; i++){
-		p->word[i] = b->array[i];
-	}
+	memcpy(p->word, b->array, b->pos);
 	p->word[b->pos] = 0;
 	p->spec = spec;
 	p->next = NULL;
 	b->pos = 0;
-	return &(p->next);
+	if(list->first){
+		list->last->next = p;
+		list->last = p;
+	}else{
+		list->first = p;
+		list->last = p;
+	}
 }
 
-struct list* free_list(struct list* p)
+void free_list(struct list* p)
 {
 	while(p){
 		struct list* tmp = p;
@@ -80,7 +108,6 @@ struct list* free_list(struct list* p)
 		free(tmp->word);
 		free(tmp);
 	}
-	return NULL;
 }
 
 int len_list(struct list* p)
@@ -128,39 +155,41 @@ char** create_argv(struct list* p)
 	return argv;
 }
 
-struct list* strip_comment(struct list* p)
+void strip_comment(struct head_list* list)
 {
-	struct list* first = p;
-	if(p == NULL){
-		return NULL;
+	struct list* tmp = list->first;
+	if(tmp == NULL){
+		return;
 	}
-	if(p->word[0] == '#'){
-		free_list(p);
-		return NULL;
+	if(tmp->word[0] == '#'){
+		free_list(list->first);
+		list->first = NULL;
+		list->last = NULL;
+		return;
 	}
-	while(p->next){
-		if(p->next->word[0] == '#'){
-			free_list(p->next);
-			p->next = NULL;
-			return first;
+	while(tmp->next){
+		if(tmp->next->word[0] == '#'){
+			free_list(tmp->next);
+			tmp->next = NULL;
+			list->last = tmp;
+			return;
 		}
-		p = p->next;
+		tmp = tmp->next;
 	}
-	return first;
 }
 
-char check_block(struct list* p)
+bool check_block(struct head_list* list)
 {
-	if(p == NULL || p->next == NULL){
+	if((list->last == NULL) || (list->first == list->last)){
 		return 1;
 	}
-	while(p->next->next){
-		p = p->next;
-	}
-	if((strcmp(p->next->word, "&") == 0) && (p->next->spec == 1)){
-		free(p->next->word);
-		free(p->next);
-		p->next = NULL;
+	if((strcmp(list->last->word, "&") == 0) && (list->last->spec == SPEC_FIRST)){
+		struct list* tmp = list->first;
+		while(tmp->next != list->last){
+			tmp = tmp->next;
+		}
+		free_list(list->last);
+		tmp->next = NULL;
 		return 0;
 	}
 	return 1;
@@ -168,8 +197,8 @@ char check_block(struct list* p)
 
 char check_or(struct list* p)
 {
-	if((strcmp(p->word, "|")) == 0 && (p->spec == 1) && (p->next) &&
-		(strcmp(p->next->word, "|") == 0) && (p->next->spec == 1)){
+	if((strcmp(p->word, "|")) == 0 && (p->spec == SPEC_FIRST) && (p->next) &&
+		(strcmp(p->next->word, "|") == 0) && (p->next->spec == SPEC_SECOND)){
 		return 1;
 	}
 	return 0;
@@ -177,55 +206,55 @@ char check_or(struct list* p)
 
 char check_and(struct list* p)
 {
-	if((strcmp(p->word, "&")) == 0 && (p->spec == 1) && (p->next) &&
-		(strcmp(p->next->word, "&") == 0) && (p->next->spec == 1)){
+	if((strcmp(p->word, "&")) == 0 && (p->spec == SPEC_FIRST) && (p->next) &&
+		(strcmp(p->next->word, "&") == 0) && (p->next->spec == SPEC_SECOND)){
 		return 1;
 	}
 	return 0;
 }
 
-char split_logic(struct list* head, struct list** tail)
+int split_logic(struct list* head, struct list** tail)
 {
 	if(head == NULL){
-		return -1;
+		return LOGIC_EMPTY;
 	}
 	while(head->next){
 		if(check_or(head->next)){
 			*tail = head->next->next->next;
 			head->next = NULL;
-			return 1;
+			return LOGIC_OR;
 		}else if(check_and(head->next)){
 			*tail = head->next->next->next;
 			head->next = NULL;
-			return 2;
+			return LOGIC_AND;
 		}
 		head = head->next;
 	}
-	return 0;
+	return LOGIC_LAST;
 }
 
 char check_pipe(struct list* p)
 {
-	if((strcmp(p->word, "|")) == 0 && (p->spec == 1)){
+	if((strcmp(p->word, "|")) == 0 && (p->spec == SPEC_FIRST)){
 		return 1;
 	}
 	return 0;
 }
 
-char split_pipeline(struct list* head, struct list** tail)
+int split_pipeline(struct list* head, struct list** tail)
 {
 	if(head == NULL){
-		return -1;
+		return PIPE_EMPTY;
 	}
 	while(head->next){
 		if(check_pipe(head->next)){
 			*tail = head->next->next;
 			head->next = NULL;
-			return 1;
+			return PIPE_DEFAULT;
 		}
 		head = head->next;
 	}
-	return 0;
+	return PIPE_LAST;
 }
 
 void dup_pipe(int fd[])
@@ -250,7 +279,7 @@ void close_pipe_fork(int fd[])
 	}
 }
 
-void close_pipe_main(int fd[])
+void prepare_fd(int fd[])
 {
 	if(fd[0] != -1){
 		close(fd[0]);
@@ -258,10 +287,6 @@ void close_pipe_main(int fd[])
 	if(fd[1] != -1){
 		close(fd[1]);
 	}
-}
-
-void prepare_fd(int fd[])
-{
 	fd[0] = fd[2];
 	fd[1] = fd[3];
 	fd[2] = -1;
@@ -273,9 +298,9 @@ char check_append(struct list* p)
 	if(p == NULL){
 		return 0;
 	}
-	if((strcmp(p->word, ">")) == 0 && (p->spec == 1) && (p->next) &&
-		(strcmp(p->next->word, ">") == 0) && (p->next->spec == 1) &&
-		(p->next->next) && (p->next->next->spec == 0)){
+	if((strcmp(p->word, ">")) == 0 && (p->spec == SPEC_FIRST) && (p->next) &&
+		(strcmp(p->next->word, ">") == 0) && (p->next->spec == SPEC_SECOND) &&
+		(p->next->next) && (p->next->next->spec == SPEC_DEFAULT)){
 		return 1;
 	}
 	return 0;
@@ -286,8 +311,8 @@ char check_write(struct list* p)
 	if(p == NULL){
 		return 0;
 	}
-	if((strcmp(p->word, ">")) == 0 && (p->spec == 1) &&
-		(p->next) && (p->next->spec == 0)){
+	if((strcmp(p->word, ">")) == 0 && (p->spec == SPEC_FIRST) &&
+		(p->next) && (p->next->spec == SPEC_DEFAULT)){
 		return 1;
 	}
 	return 0;
@@ -298,8 +323,8 @@ char check_read(struct list* p)
 	if(p == NULL){
 		return 0;
 	}
-	if((strcmp(p->word, "<")) == 0 && (p->spec == 1) &&
-		(p->next) && (p->next->spec == 0)){
+	if((strcmp(p->word, "<")) == 0 && (p->spec == SPEC_FIRST) &&
+		(p->next) && (p->next->spec == SPEC_DEFAULT)){
 		return 1;
 	}
 	return 0;
@@ -313,14 +338,14 @@ void open_files(struct list* head)
 	while(head->next){
 		if(check_append(head->next)){
 			struct list* tmp = head->next->next->next;
-			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_APPEND, 0666);
+			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_APPEND, S_IRWXU);
 			dup2(fd, 1);
 			close(fd);
 			head->next = tmp->next;
 		}
 		if(check_write(head->next)){
 			struct list* tmp = head->next->next;
-			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+			int fd = open(tmp->word, O_WRONLY|O_CREAT|O_TRUNC, S_IRWXU);
 			dup2(fd, 1);
 			close(fd);
 			head->next = tmp->next;
@@ -348,9 +373,9 @@ int execute_pipeline(struct list* p)
 	int last_exit_code = 1;
 	int fork_counter = 0;
 	int fd[4] = {-1,-1,-1,-1};
-	char flag;
-	while((flag = split_pipeline(p, &tail)) != -1){
-		if(flag != 0){
+	int pipe_stat;
+	while((pipe_stat = split_pipeline(p, &tail)) != PIPE_EMPTY){
+		if(pipe_stat != PIPE_LAST){
 			pipe(&(fd[2]));
 		}
 		if((last_pid = fork()) == 0){
@@ -363,7 +388,6 @@ int execute_pipeline(struct list* p)
 			perror("execvp");
 			exit(EXIT_FAILURE);
 		}
-		close_pipe_main(fd);
 		prepare_fd(fd);
 		fork_counter++;
 		p = tail;
@@ -380,33 +404,28 @@ int execute_pipeline(struct list* p)
 int execute_logic(struct list* p)
 {
 	struct list* tail = NULL;
-	char flag;
+	int logic_op;
 	int exit_code = 0;
-	while((flag = split_logic(p, &tail)) != -1){
+	while((logic_op = split_logic(p, &tail)) != LOGIC_EMPTY){
 		exit_code = execute_pipeline(p);
-		if(flag == 0){
+		if(logic_op == LOGIC_LAST){
 			break;
 		}
-		if((flag == 1) && (exit_code == 0)){
-			char check = -2;
-			p = tail;
-			tail = NULL;
-			while(check != -1 && check != 2){
-				check = split_logic(p, &tail);
+		if((logic_op == LOGIC_OR) && (exit_code == 0)){
+			while(logic_op != LOGIC_EMPTY && logic_op != LOGIC_AND){
 				p = tail;
 				tail = NULL;
+				logic_op = split_logic(p, &tail);
 			}
-		}
-		if((flag == 2) && (exit_code != 0)){
-			char check = -2;
-			p = tail;
-			tail = NULL;
-			while(check != -1 && check != 1){
-				check = split_logic(p, &tail);
+		}else if((logic_op == LOGIC_AND) && (exit_code != 0)){
+			while(logic_op != LOGIC_EMPTY && logic_op != LOGIC_OR){
 				p = tail;
 				tail = NULL;
+				logic_op = split_logic(p, &tail);
 			}
 		}
+		p = tail;
+		tail = NULL;
 	}
 	return exit_code;
 }
@@ -414,7 +433,7 @@ int execute_logic(struct list* p)
 char execute_cd(struct list* p)
 {
 	if(strcmp(p->word, "cd") == 0){
-		if((p->next) && (p->next->spec == 0)){
+		if((p->next) && (p->next->spec == SPEC_DEFAULT)){
 			chdir(p->next->word);
 		}
 		return 1;
@@ -423,15 +442,15 @@ char execute_cd(struct list* p)
 }
 
 
-void execute(struct list* p)
+void execute(struct head_list* list)
 {
 	int pid;
-	char block = check_block(p);
-	if(execute_cd(p)){
+	bool block = check_block(list);
+	if(execute_cd(list->first)){
 		return;
 	}
 	if((pid = fork()) == 0){
-		int exit_code = execute_logic(p);
+		int exit_code = execute_logic(list->first);
 		exit(exit_code);
 	}
 	if(pid == -1){
@@ -446,7 +465,7 @@ void execute(struct list* p)
 	kill_zombie();
 }
 
-char need_ecr(char c)
+char need_escape(char c)
 {
 	char* str = "\n'\"\\ ><|&";
 	int i;
@@ -472,70 +491,82 @@ char spec_symbol(char c)
 
 int main()
 {
-	struct list* first = NULL;
-	struct list** last = &first;
+	struct head_list list;
+	list.first = NULL;
+	list.last = NULL;
 	struct buffer* buf = create_buffer(32);
 	int c;
-	char flag_d = 0;
-	char flag_o = 0;
-	char flag_e = 0;
-	printf("$>");
+	bool is_quote_d = 0;
+	bool is_quote_s = 0;
+	bool is_escape = 0;
+	bool is_prev_spec = 0;
 	while((c = getchar()) != EOF){
-		if(flag_e){
-			if(!need_ecr(c)){
+		if(is_escape){
+			if(!need_escape(c)){
 				buf = insert_buffer(buf, '\\');
 			}
 			if(c != '\n'){
 				buf = insert_buffer(buf, c);
 			}
-			flag_e = 0;
+			is_escape = 0;
 			continue;
 		}
 		switch(c){
 		case '"':
-			if(!flag_o){
-				flag_d = !flag_d;
+			if(!is_quote_s){
+				is_quote_d = !is_quote_d;
 			}else{
 				buf = insert_buffer(buf, c);
 			}
+			is_prev_spec = 0;
 			break;
 		case '\'':
-			if(!flag_d){
-				flag_o = !flag_o;
+			if(!is_quote_d){
+				is_quote_s = !is_quote_s;
 			}else{
 				buf = insert_buffer(buf, c);
 			}
+			is_prev_spec = 0;
 			break;
 		case '\\':
-			if(!flag_o){
-				flag_e = 1;
+			if(!is_quote_s){
+				is_escape = 1;
 			}else{
 				buf = insert_buffer(buf, c);
 			}
+			is_prev_spec = 0;
 			break;
 		case ' ': case '\n': case '>': case '<': case '&': case '|':
-			if(flag_o || flag_d){
+			if(is_quote_s || is_quote_d){
 				buf = insert_buffer(buf, c);
 				continue;
 			}
-			last = insert_list(last, buf, 0);
+			insert_list(&list, buf, SPEC_DEFAULT);
 			if(spec_symbol(c)){
 				buf->pos = 1;
 				buf->array[0] = c;
-				last = insert_list(last, buf, 1);
-			}
-			if(c == '\n'){
-				first = strip_comment(first);
-				if(first){
-					execute(first);
+				if(is_prev_spec){
+					insert_list(&list, buf, SPEC_SECOND);
+				}else{
+					insert_list(&list, buf, SPEC_FIRST);
 				}
-				first = free_list(first);
-				last = &first;
-				printf("$>");
+				is_prev_spec = 1;
+			}else{
+				if(c == '\n'){
+					strip_comment(&list);
+					if(list.first){
+						execute(&list);
+					}
+					free_list(list.first);
+					list.first = NULL;
+					list.last = NULL;
+				}
+				is_prev_spec = 0;
 			}
 			break;
 		default:
 			buf = insert_buffer(buf, c);
+			is_prev_spec = 0;
 		}
 	}
 	printf("\n");
