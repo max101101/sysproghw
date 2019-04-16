@@ -119,3 +119,26 @@ ufs_close(int fd);
  */
 int
 ufs_delete(const char *filename);
+
+#ifdef NEED_RESIZE
+
+/**
+ * Resize a file opened by the file descriptor @a fd. If current
+ * file size is less than @a new_size, then new empty blocks are
+ * created and positions of opened file descriptors are not
+ * changed. If the current size is bigger than @a new_size, then
+ * the blocks are truncated. Opened file descriptors behind the
+ * new file size should proceed from the new file end.
+ *
+ * @param fd File descriptor from ufs_open().
+ * @param new_size New file size.
+ * @retval 0 Success.
+ * @retval -1 Error occurred.
+ *     - UFS_ERR_NO_FILE - invalid file descriptor.
+ *     - UFS_ERR_NO_MEM - not enough memory. Can appear only when
+ *       @a new_size is bigger than the current size.
+ */
+int
+ufs_resize(int fd, size_t new_size);
+
+#endif
