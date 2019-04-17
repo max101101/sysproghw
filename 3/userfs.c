@@ -149,6 +149,16 @@ int insert_fd(struct filedesc* fd)
 	return -1;
 }
 
+void delete_fd(int fd)
+{
+	struct file* file = file_descriptors[fd]->file;
+	if(--file->refs == 0 && file->deleted){
+		delete_file(file);
+	}
+	free(file_descriptors[fd]);
+	file_descriptors[fd] = NULL;
+}
+
 enum ufs_error_code
 ufs_errno()
 {
@@ -160,7 +170,7 @@ ufs_open(const char *filename, int flags)
 {
 	int is_create = flags & UFS_CREATE;
 	//Init FS State
-	if(file_descriptor_count == 0){
+	if(file_descriptor_capacity == 0){
 		if(is_create){
 			file_descriptors = malloc(4 * sizeof(struct filedesc*));
 			struct file* file = new_file(filename);
@@ -181,7 +191,7 @@ ufs_open(const char *filename, int flags)
 	//Search File
 	struct file* file = file_list;
 	while(file){
-		if(!strcmp(file->name, filename)){
+		if(!strcmp(file->name, filename) && !file->deleted){
 			ufs_errcode = UFS_ERR_NO_ERR;
 			return insert_fd(new_fd(file)) + 1;
 		}
@@ -203,7 +213,7 @@ ssize_t
 ufs_write(int fd, const char *buf, size_t size)
 {
 	/* IMPLEMENT THIS FUNCTION */
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
+	ufs_errcode = UFS_ERR_NOT_IMPLEMENTED;
 	return -1;
 }
 
@@ -211,40 +221,44 @@ ssize_t
 ufs_read(int fd, char *buf, size_t size)
 {
 	/* IMPLEMENT THIS FUNCTION */
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
+	ufs_errcode = UFS_ERR_NOT_IMPLEMENTED;
 	return -1;
-}
-
-void remove_fd(struct file* file)
-{
-	if(--file->refs == 0 && file->deleted){
-		delete_file(file);
-	}
 }
 
 int
 ufs_close(int fd)
 {
 	fd = fd - 1;
-	if(fd >= file_descriptor_capacity){
+	if(fd >= file_descriptor_capacity || fd < 0){
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
 	if(file_descriptors[fd]){
-		remove_fd(file_descriptors[fd]->file);
-		file_descriptors[fd] = NULL;
+		delete_fd(fd);
 		ufs_errcode = UFS_ERR_NO_ERR;
 		return 0;
-	}else{
-		ufs_errcode = UFS_ERR_NO_FILE;
-		return -1;
 	}
+	ufs_errcode = UFS_ERR_NO_FILE;
 	return -1;
 }
 
 int
 ufs_delete(const char *filename)
 {
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
+	//Search File
+	struct file* file = file_list;
+	while(file){
+		if(!strcmp(file->name, filename) && !file->deleted){
+			if(file->refs == 0){
+				delete_file(file);
+			}else{
+				file->deleted = 1;
+			}
+			ufs_errcode = UFS_ERR_NO_ERR;
+			return 0;
+		}
+		file = file->next;
+	}
+	ufs_errcode = UFS_ERR_NO_FILE;
 	return -1;
 }

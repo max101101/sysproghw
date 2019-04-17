@@ -1,6 +1,7 @@
 #include "userfs.h"
 #include "unit.h"
 #include <limits.h>
+#include <string.h>
 
 static void
 test_open(void)
