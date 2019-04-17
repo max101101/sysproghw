@@ -24,7 +24,7 @@ struct block {
 	/* PUT HERE OTHER MEMBERS */
 };
 
-struct block* new_block()
+static struct block* new_block()
 {
 	struct block* block = malloc(sizeof(struct block));
 	block->memory = malloc(BLOCK_SIZE * sizeof(char));
@@ -55,15 +55,15 @@ struct file {
 	/* PUT HERE OTHER MEMBERS */
 };
 
-struct file* new_file(const char* filename)
+static struct file* new_file(const char* filename)
 {
 	struct file* file = malloc(sizeof(struct file));
 	file->refs = 0;
 	file->name = filename;
 	file->next = NULL;
 	file->prev = NULL;
-	file->block_list = new_block();
-	file->last_block = file->block_list;
+	file->block_list = NULL;
+	file->last_block = NULL;
 	file->deleted = 0;
 	return file;
 }
@@ -71,7 +71,7 @@ struct file* new_file(const char* filename)
 /** List of all files. */
 static struct file *file_list = NULL;
 
-void delete_file(struct file* file)
+static void delete_file(struct file* file)
 {
 	while(file->block_list){
 		struct block* tmp = file->block_list;
@@ -91,7 +91,7 @@ void delete_file(struct file* file)
 	free(file);
 }
 
-void insert_file(struct file* file)
+static void insert_file(struct file* file)
 {
 	if(file_list == NULL){
 		file_list = file;
@@ -104,16 +104,29 @@ void insert_file(struct file* file)
 
 struct filedesc {
 	struct file *file;
+	int block_num;
+	int block_pos;
 
 	/* PUT HERE OTHER MEMBERS */
 };
 
-struct filedesc* new_fd(struct file* file)
+static struct filedesc* new_fd(struct file* file)
 {
 	struct filedesc* fd = malloc(sizeof(struct filedesc));
 	fd->file = file;
+	fd->block_num = 0;
+	fd->block_pos = 0;
 	fd->file->refs++;
 	return fd;
+}
+
+static struct block* get_curr_block(struct filedesc* fd)
+{
+	struct block* ret = fd->file->block_list;
+	for(int i = 0; i < fd->block_num; i++){
+		ret = ret->next;
+	}
+	return ret;
 }
 
 /**
@@ -126,7 +139,7 @@ static struct filedesc **file_descriptors = NULL;
 static int file_descriptor_count = 0;
 static int file_descriptor_capacity = 0;
 
-int insert_fd(struct filedesc* fd)
+static int insert_fd(struct filedesc* fd)
 {
 	if(file_descriptor_count == file_descriptor_capacity){
 		void* new_mem = realloc(file_descriptors,
@@ -149,7 +162,7 @@ int insert_fd(struct filedesc* fd)
 	return -1;
 }
 
-void delete_fd(int fd)
+static void delete_fd(int fd)
 {
 	struct file* file = file_descriptors[fd]->file;
 	if(--file->refs == 0 && file->deleted){
@@ -220,8 +233,38 @@ ufs_write(int fd, const char *buf, size_t size)
 ssize_t
 ufs_read(int fd, char *buf, size_t size)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	ufs_errcode = UFS_ERR_NOT_IMPLEMENTED;
+	fd = fd - 1;
+	if(fd >= file_descriptor_capacity || fd < 0){
+		ufs_errcode = UFS_ERR_NO_FILE;
+		return -1;
+	}
+	struct filedesc* filedesc = file_descriptors[fd];
+	if(filedesc){
+		struct block* curr_block = get_curr_block(filedesc);
+		if(curr_block == NULL || curr_block->occupied == filedesc->block_pos){
+			ufs_errcode = UFS_ERR_NO_ERR;
+			return 0;
+		}
+		size_t i;
+		for(i = 0; i < size; i++){
+			if(filedesc->block_pos < curr_block->occupied){
+				buf[i] = curr_block->memory[filedesc->block_pos];
+				filedesc->block_pos++;
+			}else if(filedesc->block_pos == BLOCK_SIZE){
+				curr_block = curr_block->next;
+				filedesc->block_num++;
+				filedesc->block_pos = 0;
+				if(curr_block == NULL){
+					break;
+				}
+			}else{
+				break;
+			}
+		}
+		ufs_errcode = UFS_ERR_NO_ERR;
+		return i;
+	}
+	ufs_errcode = UFS_ERR_NO_FILE;
 	return -1;
 }
 
