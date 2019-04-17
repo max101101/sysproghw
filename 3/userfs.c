@@ -221,14 +221,13 @@ ssize_t
 ufs_write(int fd, const char *buf, size_t size)
 {
 	fd = fd - 1;
-	if(fd >= file_descriptor_capacity || fd < 0){
+	if(fd >= file_descriptor_capacity || fd < 0 ||
+		!file_descriptors[fd])
+	{
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
-	if(filedesc){
-
-	}
 	ufs_errcode = UFS_ERR_NO_FILE;
 	return -1;
 }
