@@ -203,12 +203,16 @@ ssize_t
 ufs_write(int fd, const char *buf, size_t size)
 {
 	/* IMPLEMENT THIS FUNCTION */
+	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
+	return -1;
 }
 
 ssize_t
 ufs_read(int fd, char *buf, size_t size)
 {
 	/* IMPLEMENT THIS FUNCTION */
+	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
+	return -1;
 }
 
 void remove_fd(struct file* file)
@@ -235,4 +239,12 @@ ufs_close(int fd)
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
+	return -1;
+}
+
+int
+ufs_delete(const char *filename)
+{
+	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
+	return -1;
 }
