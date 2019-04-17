@@ -104,8 +104,10 @@ static void insert_file(struct file* file)
 
 struct filedesc {
 	struct file *file;
-	int block_num;
-	int block_pos;
+	int block_num_r;
+	int block_pos_r;
+	int block_num_w;
+	int block_pos_w;
 
 	/* PUT HERE OTHER MEMBERS */
 };
@@ -114,16 +116,18 @@ static struct filedesc* new_fd(struct file* file)
 {
 	struct filedesc* fd = malloc(sizeof(struct filedesc));
 	fd->file = file;
-	fd->block_num = 0;
-	fd->block_pos = 0;
+	fd->block_num_r = 0;
+	fd->block_pos_r = 0;
+	fd->block_num_w = 0;
+	fd->block_pos_w = 0;
 	fd->file->refs++;
 	return fd;
 }
 
-static struct block* get_curr_block(struct filedesc* fd)
+static struct block* get_curr_block_r(struct filedesc* fd)
 {
 	struct block* ret = fd->file->block_list;
-	for(int i = 0; i < fd->block_num; i++){
+	for(int i = 0; i < fd->block_num_r; i++){
 		ret = ret->next;
 	}
 	return ret;
@@ -143,8 +147,8 @@ static int insert_fd(struct filedesc* fd)
 {
 	if(file_descriptor_count == file_descriptor_capacity){
 		void* new_mem = realloc(file_descriptors,
-			file_descriptor_capacity * sizeof(struct filedesc*));
-		if(new_mem != NULL){
+			file_descriptor_capacity * sizeof(fd));
+		if(new_mem){
 			file_descriptors = new_mem;
 		}
 		int last = file_descriptor_capacity *= 2;
@@ -170,6 +174,7 @@ static void delete_fd(int fd)
 	}
 	free(file_descriptors[fd]);
 	file_descriptors[fd] = NULL;
+	file_descriptor_count--;
 }
 
 enum ufs_error_code
@@ -183,23 +188,13 @@ ufs_open(const char *filename, int flags)
 {
 	int is_create = flags & UFS_CREATE;
 	//Init FS State
-	if(file_descriptor_capacity == 0){
-		if(is_create){
-			file_descriptors = malloc(4 * sizeof(struct filedesc*));
-			struct file* file = new_file(filename);
-			insert_file(file);
-			file_descriptors[0] = new_fd(file);
-			for(int i = 1; i < 4; i++){
-				file_descriptors[i] = NULL;
-			}
-			file_descriptor_count = 1;
-			file_descriptor_capacity = 4;
-			ufs_errcode = UFS_ERR_NO_ERR;
-			return 1;
-		}else{
-			ufs_errcode = UFS_ERR_NO_FILE;
-			return -1;
+	if(file_descriptor_capacity == 0 && is_create){
+		file_descriptors = malloc(4 * sizeof(struct filedesc*));
+		for(int i = 1; i < 4; i++){
+			file_descriptors[i] = NULL;
 		}
+		file_descriptor_count = 0;
+		file_descriptor_capacity = 4;
 	}
 	//Search File
 	struct file* file = file_list;
@@ -225,14 +220,6 @@ ufs_open(const char *filename, int flags)
 ssize_t
 ufs_write(int fd, const char *buf, size_t size)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	ufs_errcode = UFS_ERR_NOT_IMPLEMENTED;
-	return -1;
-}
-
-ssize_t
-ufs_read(int fd, char *buf, size_t size)
-{
 	fd = fd - 1;
 	if(fd >= file_descriptor_capacity || fd < 0){
 		ufs_errcode = UFS_ERR_NO_FILE;
@@ -240,49 +227,63 @@ ufs_read(int fd, char *buf, size_t size)
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
 	if(filedesc){
-		struct block* curr_block = get_curr_block(filedesc);
-		if(curr_block == NULL || curr_block->occupied == filedesc->block_pos){
-			ufs_errcode = UFS_ERR_NO_ERR;
-			return 0;
-		}
-		size_t i;
-		for(i = 0; i < size; i++){
-			if(filedesc->block_pos < curr_block->occupied){
-				buf[i] = curr_block->memory[filedesc->block_pos];
-				filedesc->block_pos++;
-			}else if(filedesc->block_pos == BLOCK_SIZE){
-				curr_block = curr_block->next;
-				filedesc->block_num++;
-				filedesc->block_pos = 0;
-				if(curr_block == NULL){
-					break;
-				}
-			}else{
-				break;
-			}
-		}
-		ufs_errcode = UFS_ERR_NO_ERR;
-		return i;
+
 	}
 	ufs_errcode = UFS_ERR_NO_FILE;
 	return -1;
+}
+
+ssize_t
+ufs_read(int fd, char *buf, size_t size)
+{
+	fd = fd - 1;
+	if(fd >= file_descriptor_capacity || fd < 0 ||
+		!file_descriptors[fd])
+	{
+		ufs_errcode = UFS_ERR_NO_FILE;
+		return -1;
+	}
+	struct filedesc* filedesc = file_descriptors[fd];
+	struct block* curr_block = get_curr_block_r(filedesc);
+	if(curr_block == NULL ||
+		curr_block->occupied == filedesc->block_pos_r)
+	{
+		ufs_errcode = UFS_ERR_NO_ERR;
+		return 0;
+	}
+	size_t i;
+	for(i = 0; i < size; i++){
+		if(filedesc->block_pos_r < curr_block->occupied){
+			buf[i] = curr_block->memory[filedesc->block_pos_r];
+			filedesc->block_pos_r++;
+		}else if(filedesc->block_pos_r == BLOCK_SIZE){
+			curr_block = curr_block->next;
+			filedesc->block_num_r++;
+			filedesc->block_pos_r = 0;
+			if(curr_block == NULL){
+				break;
+			}
+		}else{
+			break;
+		}
+	}
+	ufs_errcode = UFS_ERR_NO_ERR;
+	return i;
 }
 
 int
 ufs_close(int fd)
 {
 	fd = fd - 1;
-	if(fd >= file_descriptor_capacity || fd < 0){
+	if(fd >= file_descriptor_capacity || fd < 0 ||
+		!file_descriptors[fd])
+	{
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
-	if(file_descriptors[fd]){
-		delete_fd(fd);
-		ufs_errcode = UFS_ERR_NO_ERR;
-		return 0;
-	}
-	ufs_errcode = UFS_ERR_NO_FILE;
-	return -1;
+	delete_fd(fd);
+	ufs_errcode = UFS_ERR_NO_ERR;
+	return 0;
 }
 
 int
