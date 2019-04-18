@@ -119,10 +119,8 @@ static void increase_file(struct file* file)
 
 struct filedesc {
 	struct file *file;
-	int block_num_r;
-	int block_pos_r;
-	int block_num_w;
-	int block_pos_w;
+	int block_num;
+	int block_pos;
 
 	/* PUT HERE OTHER MEMBERS */
 };
@@ -131,32 +129,20 @@ static struct filedesc* new_fd(struct file* file)
 {
 	struct filedesc* fd = malloc(sizeof(struct filedesc));
 	fd->file = file;
-	fd->block_num_r = 0;
-	fd->block_pos_r = 0;
-	fd->block_num_w = 0;
-	fd->block_pos_w = 0;
+	fd->block_num = 0;
+	fd->block_pos = 0;
 	fd->file->refs++;
 	return fd;
 }
 
-static struct block* get_curr_block_r(struct filedesc* fd)
+static struct block* get_curr_block(struct filedesc* fd)
 {
 	struct block* ret = fd->file->block_list;
-	for(int i = 0; i < fd->block_num_r; i++){
+	for(int i = 0; i < fd->block_num; i++){
 		ret = ret->next;
 	}
 	return ret;
 }
-
-static struct block* get_curr_block_w(struct filedesc* fd)
-{
-	struct block* ret = fd->file->block_list;
-	for(int i = 0; i < fd->block_num_w; i++){
-		ret = ret->next;
-	}
-	return ret;
-}
-
 
 /**
  * An array of file descriptors. When a file descriptor is
@@ -255,27 +241,27 @@ ufs_write(int fd, const char *buf, size_t size)
 		return -1;
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
-	if(filedesc->block_num_w * BLOCK_SIZE +
-		filedesc->block_pos_w + size > MAX_FILE_SIZE)
+	if(filedesc->block_num * BLOCK_SIZE +
+		filedesc->block_pos + size > MAX_FILE_SIZE)
 	{
 		ufs_errcode = UFS_ERR_NO_MEM;
 		return -1;
 	}
-	struct block* curr_block = get_curr_block_w(filedesc);
+	struct block* curr_block = get_curr_block(filedesc);
 	if(curr_block == NULL){
 		increase_file(filedesc->file);
-		curr_block = get_curr_block_w(filedesc);
+		curr_block = get_curr_block(filedesc);
 	}
 	size_t i;
 	for(i = 0; i < size; i++){
-		curr_block->memory[filedesc->block_pos_w] = buf[i];
-		if(filedesc->block_pos_w == curr_block->occupied){
+		curr_block->memory[filedesc->block_pos] = buf[i];
+		if(filedesc->block_pos == curr_block->occupied){
 			curr_block->occupied++;
 		}
-		filedesc->block_pos_w++;
-		if(filedesc->block_pos_w == BLOCK_SIZE){
-			filedesc->block_num_w++;
-			filedesc->block_pos_w = 0;
+		filedesc->block_pos++;
+		if(filedesc->block_pos == BLOCK_SIZE){
+			filedesc->block_num++;
+			filedesc->block_pos = 0;
 			if(curr_block->next == NULL){
 				increase_file(filedesc->file);
 			}
@@ -297,22 +283,22 @@ ufs_read(int fd, char *buf, size_t size)
 		return -1;
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
-	struct block* curr_block = get_curr_block_r(filedesc);
+	struct block* curr_block = get_curr_block(filedesc);
 	if(curr_block == NULL ||
-		curr_block->occupied == filedesc->block_pos_r)
+		curr_block->occupied == filedesc->block_pos)
 	{
 		ufs_errcode = UFS_ERR_NO_ERR;
 		return 0;
 	}
 	size_t i;
 	for(i = 0; i < size; i++){
-		if(filedesc->block_pos_r < curr_block->occupied){
-			buf[i] = curr_block->memory[filedesc->block_pos_r];
-			filedesc->block_pos_r++;
-		}else if(filedesc->block_pos_r == BLOCK_SIZE){
+		if(filedesc->block_pos < curr_block->occupied){
+			buf[i] = curr_block->memory[filedesc->block_pos];
+			filedesc->block_pos++;
+		}else if(filedesc->block_pos == BLOCK_SIZE){
 			curr_block = curr_block->next;
-			filedesc->block_num_r++;
-			filedesc->block_pos_r = 0;
+			filedesc->block_num++;
+			filedesc->block_pos = 0;
 			if(curr_block == NULL){
 				break;
 			}
