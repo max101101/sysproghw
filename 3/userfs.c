@@ -45,7 +45,7 @@ struct file {
 	/** How many file descriptors are opened on the file. */
 	int refs;
 	/** File name. */
-	const char *name;
+	char *name;
 	/** Files are stored in a double-linked list. */
 	struct file *next;
 	struct file *prev;
@@ -59,7 +59,8 @@ static struct file* new_file(const char* filename)
 {
 	struct file* file = malloc(sizeof(struct file));
 	file->refs = 0;
-	file->name = filename;
+	file->name = malloc(sizeof(char)*strlen(filename) + 1);
+	memcpy(file->name, filename, strlen(filename)+1);
 	file->next = NULL;
 	file->prev = NULL;
 	file->block_list = NULL;
@@ -88,6 +89,7 @@ static void delete_file(struct file* file)
 	if(file_list == file){
 		file_list = file->next;
 	}
+	free(file->name);
 	free(file);
 }
 
@@ -100,6 +102,19 @@ static void insert_file(struct file* file)
 	file_list->prev = file;
 	file->next = file_list;
 	file_list = file;
+}
+
+static void increase_file(struct file* file)
+{
+	struct block* block = new_block();
+	if(file->block_list == NULL){
+		file->block_list = block;
+		file->last_block = block;
+		return;
+	}
+	file->last_block->next = block;
+	block->prev = file->last_block;
+	file->last_block = block;
 }
 
 struct filedesc {
@@ -133,6 +148,16 @@ static struct block* get_curr_block_r(struct filedesc* fd)
 	return ret;
 }
 
+static struct block* get_curr_block_w(struct filedesc* fd)
+{
+	struct block* ret = fd->file->block_list;
+	for(int i = 0; i < fd->block_num_w; i++){
+		ret = ret->next;
+	}
+	return ret;
+}
+
+
 /**
  * An array of file descriptors. When a file descriptor is
  * created, its pointer drops here. When a file descriptor is
@@ -151,13 +176,15 @@ static int insert_fd(struct filedesc* fd)
 		if(new_mem){
 			file_descriptors = new_mem;
 		}
-		int last = file_descriptor_capacity *= 2;
-		for(int i = file_descriptor_count; i < last; i++){
+		file_descriptor_capacity *= 2;
+		for(int i = file_descriptor_count;
+			i < file_descriptor_capacity; i++)
+		{
 			file_descriptors[i] = NULL;
 		}
 	}
 	for(int i = 0; i < file_descriptor_capacity; i++){
-		if(!file_descriptors[i]){
+		if(file_descriptors[i] == NULL){
 			file_descriptors[i] = fd;
 			file_descriptor_count++;
 			return i;
@@ -190,7 +217,7 @@ ufs_open(const char *filename, int flags)
 	//Init FS State
 	if(file_descriptor_capacity == 0 && is_create){
 		file_descriptors = malloc(4 * sizeof(struct filedesc*));
-		for(int i = 1; i < 4; i++){
+		for(int i = 0; i < 4; i++){
 			file_descriptors[i] = NULL;
 		}
 		file_descriptor_count = 0;
@@ -228,8 +255,35 @@ ufs_write(int fd, const char *buf, size_t size)
 		return -1;
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
-	ufs_errcode = UFS_ERR_NO_FILE;
-	return -1;
+	if(filedesc->block_num_w * BLOCK_SIZE +
+		filedesc->block_pos_w + size > MAX_FILE_SIZE)
+	{
+		ufs_errcode = UFS_ERR_NO_MEM;
+		return -1;
+	}
+	struct block* curr_block = get_curr_block_w(filedesc);
+	if(curr_block == NULL){
+		increase_file(filedesc->file);
+		curr_block = get_curr_block_w(filedesc);
+	}
+	size_t i;
+	for(i = 0; i < size; i++){
+		curr_block->memory[filedesc->block_pos_w] = buf[i];
+		if(filedesc->block_pos_w == curr_block->occupied){
+			curr_block->occupied++;
+		}
+		filedesc->block_pos_w++;
+		if(filedesc->block_pos_w == BLOCK_SIZE){
+			filedesc->block_num_w++;
+			filedesc->block_pos_w = 0;
+			if(curr_block->next == NULL){
+				increase_file(filedesc->file);
+			}
+			curr_block = curr_block->next;
+		}
+	}
+	ufs_errcode = UFS_ERR_NO_ERR;
+	return i;
 }
 
 ssize_t
