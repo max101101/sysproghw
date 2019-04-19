@@ -162,7 +162,7 @@ static int insert_fd(struct filedesc* fd)
 {
 	if(file_descriptor_count == file_descriptor_capacity){
 		void* new_mem = realloc(file_descriptors,
-			file_descriptor_capacity * sizeof(fd));
+			file_descriptor_capacity * 2 * sizeof(fd));
 		if(new_mem){
 			file_descriptors = new_mem;
 		}

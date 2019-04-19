@@ -37,6 +37,39 @@ test_open(void)
 }
 
 static void
+test_stress_open(void)
+{
+	unit_test_start();
+
+	const int count = 1000;
+	int fd[count][2];
+	char name[16], buf[16];
+	unit_msg("open %d read and write descriptors, fill with data", count);
+	for (int i = 0; i < count; ++i) {
+		int name_len = sprintf(name, "file%d", i) + 1;
+		int *in = &fd[i][0], *out = &fd[i][1];
+		*in = ufs_open(name, UFS_CREATE);
+		*out = ufs_open(name, 0);
+		unit_fail_if(*in == -1 || *out == -1);
+		ssize_t rc = ufs_write(*out, name, name_len);
+		unit_fail_if(rc != name_len);
+	}
+	unit_msg("read the data back");
+	for (int i = 0; i < count; ++i) {
+		int name_len = sprintf(name, "file%d", i) + 1;
+		int *in = &fd[i][0], *out = &fd[i][1];
+		ssize_t rc = ufs_read(*in, buf, sizeof(buf));
+		unit_fail_if(rc != name_len);
+		unit_fail_if(memcmp(buf, name, rc) != 0);
+		unit_fail_if(ufs_close(*in) != 0);
+		unit_fail_if(ufs_close(*out) != 0);
+		unit_fail_if(ufs_delete(name) != 0);
+	}
+
+	unit_test_finish();
+}
+
+static void
 test_close(void)
 {
 	unit_test_start();
@@ -147,6 +180,63 @@ test_delete(void)
 	unit_test_finish();
 }
 
+static void
+test_rights(void)
+{
+#ifdef NEED_OPEN_FLAGS
+	unit_test_start();
+
+	int fd = ufs_open("file", UFS_CREATE);
+	unit_check(fd != -1, "file is opened with 'create' flag only");
+	char *buf1 = "hello";
+	int buf1_size = strlen(buf1) + 1;
+	ssize_t rc = ufs_read(fd, buf1, buf1_size);
+	unit_check(rc == 0, "it is allowed to read from it");
+	rc = ufs_write(fd, buf1, buf1_size);
+	unit_check(rc == buf1_size, "as well as write into it");
+	unit_fail_if(ufs_close(fd) != 0);
+
+	fd = ufs_open("file", 0);
+	unit_check(fd != -1, "now opened without flags at all");
+	char buf2[128];
+	unit_check(ufs_read(fd, buf2, sizeof(buf2)) == buf1_size, "can read");
+	unit_fail_if(memcmp(buf1, buf2, buf1_size) != 0);
+	unit_check(ufs_write(fd, buf1, buf1_size) == buf1_size, "can write");
+	unit_fail_if(ufs_close(fd) != 0);
+
+	fd = ufs_open("file", UFS_READ_ONLY);
+	unit_check(fd != -1, "opened with 'read only'");
+	unit_check(ufs_read(fd, buf2, buf1_size) == buf1_size, "can read");
+	unit_fail_if(memcmp(buf1, buf2, buf1_size) != 0);
+	unit_check(ufs_write(fd, "bad", 4) == -1, "can not write");
+	unit_check(ufs_errno() == UFS_ERR_NO_PERMISSION, "errno is set");
+	unit_check(ufs_read(fd, buf2, sizeof(buf2)) == buf1_size,
+		   "can again read");
+	unit_check(memcmp(buf1, buf2, buf1_size) == 0,
+		   "and data was not overwritten");
+	unit_fail_if(ufs_close(fd) != 0);
+
+	fd = ufs_open("file", UFS_WRITE_ONLY);
+	unit_check(fd != -1, "opened with 'write only");
+	unit_check(ufs_read(fd, buf2, sizeof(buf2)) == -1, "can not read");
+	unit_check(ufs_errno() == UFS_ERR_NO_PERMISSION, "errno is set");
+	char *buf3 = "new data which rewrites previous";
+	int buf3_size = strlen(buf3) + 1;
+	unit_check(ufs_write(fd, buf3, buf3_size) == buf3_size, "can write");
+	unit_fail_if(ufs_close(fd));
+
+	fd = ufs_open("file", UFS_READ_WRITE);
+	unit_check(fd != -1, "opened with 'read write");
+	unit_check(ufs_read(fd, buf2, sizeof(buf2)) == buf3_size, "can read");
+	unit_check(memcmp(buf2, buf3, buf3_size) == 0, "data is correct");
+	unit_check(ufs_write(fd, buf1, buf1_size) == buf1_size, "can write");
+	unit_fail_if(ufs_close(fd));
+
+	unit_fail_if(ufs_delete("file") != 0);
+	unit_test_finish();
+#endif
+}
+
 int
 main(void)
 {
@@ -156,6 +246,8 @@ main(void)
 	test_close();
 	test_io();
 	test_delete();
+	test_stress_open();
+	test_rights();
 
 	unit_test_finish();
 	return 0;

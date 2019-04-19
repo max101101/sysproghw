@@ -18,6 +18,12 @@
 	}								\
 })
 
+#define unit_msg(...) ({						\
+	printf("# ");							\
+	printf(__VA_ARGS__);						\
+	printf("\n");							\
+})
+
 #define unit_check(cond, msg) ({					\
 	if (! (cond)) {							\
 		printf("not ok - %s\n", (msg));				\
