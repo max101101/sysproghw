@@ -1,3 +1,5 @@
+#define NEED_OPEN_FLAGS
+
 #include "userfs.h"
 #include <stdlib.h>
 #include <stdbool.h>
@@ -121,16 +123,18 @@ struct filedesc {
 	struct file *file;
 	int block_num;
 	int block_pos;
+	int rw_flags;
 
 	/* PUT HERE OTHER MEMBERS */
 };
 
-static struct filedesc* new_fd(struct file* file)
+static struct filedesc* new_fd(struct file* file, int flags)
 {
 	struct filedesc* fd = malloc(sizeof(struct filedesc));
 	fd->file = file;
 	fd->block_num = 0;
 	fd->block_pos = 0;
+	fd->rw_flags = flags;
 	fd->file->refs++;
 	return fd;
 }
@@ -200,6 +204,10 @@ int
 ufs_open(const char *filename, int flags)
 {
 	int is_create = flags & UFS_CREATE;
+	int fd_flags = flags & (UFS_READ_ONLY | UFS_WRITE_ONLY | UFS_READ_WRITE);
+	if(fd_flags == 0){
+		fd_flags = UFS_READ_WRITE;
+	}
 	//Init FS State
 	if(file_descriptor_capacity == 0 && is_create){
 		file_descriptors = malloc(4 * sizeof(struct filedesc*));
@@ -214,7 +222,7 @@ ufs_open(const char *filename, int flags)
 	while(file){
 		if(!strcmp(file->name, filename) && !file->deleted){
 			ufs_errcode = UFS_ERR_NO_ERR;
-			return insert_fd(new_fd(file)) + 1;
+			return insert_fd(new_fd(file, fd_flags)) + 1;
 		}
 		file = file->next;
 	}
@@ -222,7 +230,7 @@ ufs_open(const char *filename, int flags)
 	if(is_create){
 		struct file* file = new_file(filename);
 		insert_file(file);
-		struct filedesc* fd = new_fd(file);
+		struct filedesc* fd = new_fd(file, fd_flags);
 		ufs_errcode = UFS_ERR_NO_ERR;
 		return insert_fd(fd) + 1;
 	}
@@ -241,6 +249,12 @@ ufs_write(int fd, const char *buf, size_t size)
 		return -1;
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
+	if((filedesc->rw_flags & UFS_WRITE_ONLY) == 0 &&
+		(filedesc->rw_flags & UFS_READ_WRITE) == 0)
+	{
+		ufs_errcode = UFS_ERR_NO_PERMISSION; 
+		return -1;
+	}
 	if(filedesc->block_num * BLOCK_SIZE +
 		filedesc->block_pos + size > MAX_FILE_SIZE)
 	{
@@ -283,6 +297,12 @@ ufs_read(int fd, char *buf, size_t size)
 		return -1;
 	}
 	struct filedesc* filedesc = file_descriptors[fd];
+	if((filedesc->rw_flags & UFS_READ_ONLY) == 0 &&
+		(filedesc->rw_flags & UFS_READ_WRITE) == 0)
+	{
+		ufs_errcode = UFS_ERR_NO_PERMISSION; 
+		return -1;
+	}
 	struct block* curr_block = get_curr_block(filedesc);
 	if(curr_block == NULL ||
 		curr_block->occupied == filedesc->block_pos)
