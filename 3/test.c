@@ -144,7 +144,7 @@ test_delete(void)
 	unit_fail_if(ufs_close(fd3) != 0);
 	unit_fail_if(ufs_close(fd4) != 0);
 
-	unit_test_start();
+	unit_test_finish();
 }
 
 int
