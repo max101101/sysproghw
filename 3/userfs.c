@@ -274,24 +274,29 @@ ufs_write(int fd, const char *buf, size_t size)
 		increase_file(filedesc->file);
 		curr_block = get_curr_block(filedesc);
 	}
-	size_t i;
-	for(i = 0; i < size; i++){
-		curr_block->memory[filedesc->block_pos] = buf[i];
-		if(filedesc->block_pos == curr_block->occupied){
-			curr_block->occupied++;
-		}
-		filedesc->block_pos++;
+	int b_written = 0;
+	while(size){
 		if(filedesc->block_pos == BLOCK_SIZE){
-			filedesc->block_num++;
 			filedesc->block_pos = 0;
+			filedesc->block_num++;
 			if(curr_block->next == NULL){
 				increase_file(filedesc->file);
 			}
 			curr_block = curr_block->next;
 		}
+		int free_b = BLOCK_SIZE - curr_block->occupied;
+		int b_to_write = size > free_b ? free_b : size;
+		memcpy(&(curr_block->memory[filedesc->block_pos]),
+			&(buf[b_written]), b_to_write);
+		filedesc->block_pos += b_to_write;
+		b_written += b_to_write;
+		size -= b_to_write;
+		if(filedesc->block_pos > curr_block->occupied){
+			curr_block->occupied = filedesc->block_pos;
+		}
 	}
 	ufs_errcode = UFS_ERR_NO_ERR;
-	return i;
+	return b_written;
 }
 
 ssize_t
@@ -308,30 +313,35 @@ ufs_read(int fd, char *buf, size_t size)
 		return -1;
 	}
 	struct block* curr_block = get_curr_block(filedesc);
-	if(curr_block == NULL ||
-		curr_block->occupied == filedesc->block_pos)
+	if(curr_block == NULL)
 	{
 		ufs_errcode = UFS_ERR_NO_ERR;
 		return 0;
 	}
-	size_t i;
-	for(i = 0; i < size; i++){
-		if(filedesc->block_pos < curr_block->occupied){
-			buf[i] = curr_block->memory[filedesc->block_pos];
-			filedesc->block_pos++;
-		}else if(filedesc->block_pos == BLOCK_SIZE){
-			curr_block = curr_block->next;
-			filedesc->block_num++;
+	int b_read = 0;
+	while(size){
+		if(filedesc->block_pos == BLOCK_SIZE){
 			filedesc->block_pos = 0;
-			if(curr_block == NULL){
-				break;
+			filedesc->block_num++;
+			if(curr_block->next == NULL){
+				ufs_errcode = UFS_ERR_NO_ERR;
+				return b_read;
 			}
-		}else{
-			break;
+			curr_block = curr_block->next;
 		}
+		if(filedesc->block_pos == curr_block->occupied){
+			return b_read;
+		}
+		int free_b = curr_block->occupied - filedesc->block_pos;
+		int b_to_read = size > free_b ? free_b : size;
+		memcpy(&(buf[b_read]),
+			&(curr_block->memory[filedesc->block_pos]), b_to_read);
+		filedesc->block_pos += b_to_read;
+		b_read += b_to_read;
+		size -= b_to_read;
 	}
 	ufs_errcode = UFS_ERR_NO_ERR;
-	return i;
+	return b_read;
 }
 
 int
