@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdio.h>
 
 enum {
 	BLOCK_SIZE = 512,
@@ -51,9 +52,8 @@ struct file {
 	/** Files are stored in a double-linked list. */
 	struct file *next;
 	struct file *prev;
-	//Soft delete
-	bool deleted;
 
+	bool deleted;
 	/* PUT HERE OTHER MEMBERS */
 };
 
@@ -74,14 +74,8 @@ static struct file* new_file(const char* filename)
 /** List of all files. */
 static struct file *file_list = NULL;
 
-static void delete_file(struct file* file)
+static void unlink_file(struct file* file)
 {
-	while(file->block_list){
-		struct block* tmp = file->block_list;
-		file->block_list = file->block_list->next;
-		free(tmp->memory);
-		free(tmp);
-	}
 	if(file->prev){
 		file->prev->next = file->next;
 	}
@@ -90,6 +84,16 @@ static void delete_file(struct file* file)
 	}
 	if(file_list == file){
 		file_list = file->next;
+	}
+}
+
+static void delete_file(struct file* file)
+{
+	while(file->block_list){
+		struct block* tmp = file->block_list;
+		file->block_list = file->block_list->next;
+		free(tmp->memory);
+		free(tmp);
 	}
 	free(file->name);
 	free(file);
@@ -162,11 +166,11 @@ static int insert_fd(struct filedesc* fd)
 {
 	if(file_descriptor_count == file_descriptor_capacity){
 		void* new_mem = realloc(file_descriptors,
-			file_descriptor_capacity * 2 * sizeof(fd));
+			(file_descriptor_capacity+1) * 2 * sizeof(fd));
 		if(new_mem){
 			file_descriptors = new_mem;
 		}
-		file_descriptor_capacity *= 2;
+		file_descriptor_capacity = (file_descriptor_capacity+1) * 2;
 		for(int i = file_descriptor_count;
 			i < file_descriptor_capacity; i++)
 		{
@@ -200,6 +204,23 @@ ufs_errno()
 	return ufs_errcode;
 }
 
+/**
+ * Find a file descriptor structure by its 1-based identifier.
+ * @retval NULL Not found, errno is set to UFS_ERR_NO_FILE.
+ * @retval not NULL Valid descriptor structure.
+ */
+static inline struct filedesc *
+ufs_get_fd(int fd)
+{
+	fd = fd - 1;
+	if(fd >= file_descriptor_capacity || fd < 0 ||
+		!file_descriptors[fd])
+	{
+		return NULL;
+	}
+	return file_descriptors[fd];
+}
+
 int
 ufs_open(const char *filename, int flags)
 {
@@ -208,19 +229,10 @@ ufs_open(const char *filename, int flags)
 	if(fd_flags == 0){
 		fd_flags = UFS_READ_WRITE;
 	}
-	//Init FS State
-	if(file_descriptor_capacity == 0 && is_create){
-		file_descriptors = malloc(4 * sizeof(struct filedesc*));
-		for(int i = 0; i < 4; i++){
-			file_descriptors[i] = NULL;
-		}
-		file_descriptor_count = 0;
-		file_descriptor_capacity = 4;
-	}
 	//Search File
 	struct file* file = file_list;
 	while(file){
-		if(!strcmp(file->name, filename) && !file->deleted){
+		if(!strcmp(file->name, filename)){
 			ufs_errcode = UFS_ERR_NO_ERR;
 			return insert_fd(new_fd(file, fd_flags)) + 1;
 		}
@@ -241,16 +253,12 @@ ufs_open(const char *filename, int flags)
 ssize_t
 ufs_write(int fd, const char *buf, size_t size)
 {
-	fd = fd - 1;
-	if(fd >= file_descriptor_capacity || fd < 0 ||
-		!file_descriptors[fd])
-	{
+	struct filedesc* filedesc = ufs_get_fd(fd);
+	if(filedesc == NULL){
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
-	struct filedesc* filedesc = file_descriptors[fd];
-	if((filedesc->rw_flags & UFS_WRITE_ONLY) == 0 &&
-		(filedesc->rw_flags & UFS_READ_WRITE) == 0)
+	if((filedesc->rw_flags & (UFS_WRITE_ONLY | UFS_READ_WRITE)) == 0)
 	{
 		ufs_errcode = UFS_ERR_NO_PERMISSION; 
 		return -1;
@@ -289,16 +297,12 @@ ufs_write(int fd, const char *buf, size_t size)
 ssize_t
 ufs_read(int fd, char *buf, size_t size)
 {
-	fd = fd - 1;
-	if(fd >= file_descriptor_capacity || fd < 0 ||
-		!file_descriptors[fd])
-	{
+	struct filedesc* filedesc = ufs_get_fd(fd);
+	if(filedesc == NULL){
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
-	struct filedesc* filedesc = file_descriptors[fd];
-	if((filedesc->rw_flags & UFS_READ_ONLY) == 0 &&
-		(filedesc->rw_flags & UFS_READ_WRITE) == 0)
+	if((filedesc->rw_flags & (UFS_READ_ONLY | UFS_READ_WRITE)) == 0)
 	{
 		ufs_errcode = UFS_ERR_NO_PERMISSION; 
 		return -1;
@@ -333,14 +337,12 @@ ufs_read(int fd, char *buf, size_t size)
 int
 ufs_close(int fd)
 {
-	fd = fd - 1;
-	if(fd >= file_descriptor_capacity || fd < 0 ||
-		!file_descriptors[fd])
-	{
+	struct filedesc* filedesc = ufs_get_fd(fd);
+	if(filedesc == NULL){
 		ufs_errcode = UFS_ERR_NO_FILE;
 		return -1;
 	}
-	delete_fd(fd);
+	delete_fd(fd-1);
 	ufs_errcode = UFS_ERR_NO_ERR;
 	return 0;
 }
@@ -351,11 +353,11 @@ ufs_delete(const char *filename)
 	//Search File
 	struct file* file = file_list;
 	while(file){
-		if(!strcmp(file->name, filename) && !file->deleted){
+		if(!strcmp(file->name, filename)){
+			unlink_file(file);
+			file->deleted = 1;
 			if(file->refs == 0){
 				delete_file(file);
-			}else{
-				file->deleted = 1;
 			}
 			ufs_errcode = UFS_ERR_NO_ERR;
 			return 0;
