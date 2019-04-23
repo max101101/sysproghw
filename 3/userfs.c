@@ -110,17 +110,18 @@ static void insert_file(struct file* file)
 	file_list = file;
 }
 
-static void increase_file(struct file* file)
+static struct block* increase_file(struct file* file)
 {
 	struct block* block = new_block();
 	if(file->block_list == NULL){
 		file->block_list = block;
 		file->last_block = block;
-		return;
+	}else{
+		file->last_block->next = block;
+		block->prev = file->last_block;
+		file->last_block = block;
 	}
-	file->last_block->next = block;
-	block->prev = file->last_block;
-	file->last_block = block;
+	return block;
 }
 
 struct filedesc {
@@ -128,6 +129,7 @@ struct filedesc {
 	int block_num;
 	int block_pos;
 	int rw_flags;
+	struct block* curr_block;
 
 	/* PUT HERE OTHER MEMBERS */
 };
@@ -139,17 +141,17 @@ static struct filedesc* new_fd(struct file* file, int flags)
 	fd->block_num = 0;
 	fd->block_pos = 0;
 	fd->rw_flags = flags;
+	fd->curr_block = NULL;
 	fd->file->refs++;
 	return fd;
 }
 
 static struct block* get_curr_block(struct filedesc* fd)
 {
-	struct block* ret = fd->file->block_list;
-	for(int i = 0; i < fd->block_num; i++){
-		ret = ret->next;
+	if(fd->file->block_list){
+		return fd->file->block_list;
 	}
-	return ret;
+	return increase_file(fd->file);
 }
 
 /**
@@ -269,30 +271,32 @@ ufs_write(int fd, const char *buf, size_t size)
 		ufs_errcode = UFS_ERR_NO_MEM;
 		return -1;
 	}
-	struct block* curr_block = get_curr_block(filedesc);
-	if(curr_block == NULL){
-		increase_file(filedesc->file);
-		curr_block = get_curr_block(filedesc);
+	if(filedesc->curr_block == NULL){
+		if(filedesc->file->block_list){
+			filedesc->curr_block = filedesc->file->block_list;
+		}else{
+			filedesc->curr_block = increase_file(filedesc->file);
+		}
 	}
 	int b_written = 0;
 	while(size){
 		if(filedesc->block_pos == BLOCK_SIZE){
 			filedesc->block_pos = 0;
 			filedesc->block_num++;
-			if(curr_block->next == NULL){
+			if(filedesc->curr_block->next == NULL){
 				increase_file(filedesc->file);
 			}
-			curr_block = curr_block->next;
+			filedesc->curr_block = filedesc->curr_block->next;
 		}
-		int free_b = BLOCK_SIZE - curr_block->occupied;
+		int free_b = BLOCK_SIZE - filedesc->curr_block->occupied;
 		int b_to_write = size > free_b ? free_b : size;
-		memcpy(&(curr_block->memory[filedesc->block_pos]),
+		memcpy(&(filedesc->curr_block->memory[filedesc->block_pos]),
 			&(buf[b_written]), b_to_write);
 		filedesc->block_pos += b_to_write;
 		b_written += b_to_write;
 		size -= b_to_write;
-		if(filedesc->block_pos > curr_block->occupied){
-			curr_block->occupied = filedesc->block_pos;
+		if(filedesc->block_pos > filedesc->curr_block->occupied){
+			filedesc->curr_block->occupied = filedesc->block_pos;
 		}
 	}
 	ufs_errcode = UFS_ERR_NO_ERR;
@@ -312,30 +316,32 @@ ufs_read(int fd, char *buf, size_t size)
 		ufs_errcode = UFS_ERR_NO_PERMISSION; 
 		return -1;
 	}
-	struct block* curr_block = get_curr_block(filedesc);
-	if(curr_block == NULL)
+	if(filedesc->curr_block == NULL)
 	{
-		ufs_errcode = UFS_ERR_NO_ERR;
-		return 0;
+		if(filedesc->file->block_list == NULL){
+			ufs_errcode = UFS_ERR_NO_ERR;
+			return 0;
+		}
+		filedesc->curr_block = filedesc->file->block_list;
 	}
 	int b_read = 0;
 	while(size){
 		if(filedesc->block_pos == BLOCK_SIZE){
 			filedesc->block_pos = 0;
 			filedesc->block_num++;
-			if(curr_block->next == NULL){
+			if(filedesc->curr_block->next == NULL){
 				ufs_errcode = UFS_ERR_NO_ERR;
 				return b_read;
 			}
-			curr_block = curr_block->next;
+			filedesc->curr_block = filedesc->curr_block->next;
 		}
-		if(filedesc->block_pos == curr_block->occupied){
+		if(filedesc->block_pos == filedesc->curr_block->occupied){
 			return b_read;
 		}
-		int free_b = curr_block->occupied - filedesc->block_pos;
+		int free_b = filedesc->curr_block->occupied - filedesc->block_pos;
 		int b_to_read = size > free_b ? free_b : size;
 		memcpy(&(buf[b_read]),
-			&(curr_block->memory[filedesc->block_pos]), b_to_read);
+			&(filedesc->curr_block->memory[filedesc->block_pos]), b_to_read);
 		filedesc->block_pos += b_to_read;
 		b_read += b_to_read;
 		size -= b_to_read;
