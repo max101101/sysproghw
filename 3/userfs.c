@@ -1,4 +1,5 @@
 #define NEED_OPEN_FLAGS
+#define NEED_RESIZE
 
 #include "userfs.h"
 #include <stdlib.h>
@@ -54,6 +55,7 @@ struct file {
 	struct file *prev;
 
 	bool deleted;
+	int num_blocks;
 	/* PUT HERE OTHER MEMBERS */
 };
 
@@ -68,6 +70,7 @@ static struct file* new_file(const char* filename)
 	file->block_list = NULL;
 	file->last_block = NULL;
 	file->deleted = 0;
+	file->num_blocks = 0;
 	return file;
 }
 
@@ -121,6 +124,7 @@ static struct block* increase_file(struct file* file)
 		block->prev = file->last_block;
 		file->last_block = block;
 	}
+	file->num_blocks++;
 	return block;
 }
 
@@ -144,14 +148,6 @@ static struct filedesc* new_fd(struct file* file, int flags)
 	fd->curr_block = NULL;
 	fd->file->refs++;
 	return fd;
-}
-
-static struct block* get_curr_block(struct filedesc* fd)
-{
-	if(fd->file->block_list){
-		return fd->file->block_list;
-	}
-	return increase_file(fd->file);
 }
 
 /**
@@ -265,8 +261,14 @@ ufs_write(int fd, const char *buf, size_t size)
 		ufs_errcode = UFS_ERR_NO_PERMISSION; 
 		return -1;
 	}
-	if(filedesc->block_num * BLOCK_SIZE +
-		filedesc->block_pos + size > MAX_FILE_SIZE)
+	int curr_size;
+	if(filedesc->block_num == 0){
+		curr_size = 0;
+	}else{
+		curr_size = (filedesc->block_num-1)*BLOCK_SIZE
+			+ filedesc->block_pos;
+	}
+	if(curr_size + size > MAX_FILE_SIZE)
 	{
 		ufs_errcode = UFS_ERR_NO_MEM;
 		return -1;
@@ -277,6 +279,7 @@ ufs_write(int fd, const char *buf, size_t size)
 		}else{
 			filedesc->curr_block = increase_file(filedesc->file);
 		}
+		filedesc->block_num = 1;
 	}
 	int b_written = 0;
 	while(size){
@@ -323,16 +326,17 @@ ufs_read(int fd, char *buf, size_t size)
 			return 0;
 		}
 		filedesc->curr_block = filedesc->file->block_list;
+		filedesc->block_num = 1;
 	}
 	int b_read = 0;
 	while(size){
 		if(filedesc->block_pos == BLOCK_SIZE){
-			filedesc->block_pos = 0;
-			filedesc->block_num++;
 			if(filedesc->curr_block->next == NULL){
 				ufs_errcode = UFS_ERR_NO_ERR;
 				return b_read;
 			}
+			filedesc->block_pos = 0;
+			filedesc->block_num++;
 			filedesc->curr_block = filedesc->curr_block->next;
 		}
 		if(filedesc->block_pos == filedesc->curr_block->occupied){
@@ -382,4 +386,82 @@ ufs_delete(const char *filename)
 	}
 	ufs_errcode = UFS_ERR_NO_FILE;
 	return -1;
+}
+
+int
+ufs_resize(int fd, size_t new_size)
+{
+	struct filedesc* filedesc = ufs_get_fd(fd);
+	if(filedesc == NULL){
+		ufs_errcode = UFS_ERR_NO_FILE;
+		return -1;
+	}
+	if(new_size > MAX_FILE_SIZE){
+		ufs_errcode = UFS_ERR_NO_MEM;
+		return -1;
+	}
+	struct file* file = filedesc->file;
+	size_t old_size;
+	if(file->num_blocks == 0){
+		old_size = 0;
+	}else{
+		old_size = (file->num_blocks-1) * BLOCK_SIZE
+			+ file->last_block->occupied;
+	}
+	int new_num_blocks = new_size/BLOCK_SIZE + 1;
+	int new_block_pos = new_size%BLOCK_SIZE;
+	if(new_block_pos == 0){
+		new_block_pos = 512;
+		new_num_blocks--;
+	}
+	//Increase file size
+	if(new_size >= old_size){
+		while(file->num_blocks < new_num_blocks){
+			increase_file(file);
+		}
+		ufs_errcode = UFS_ERR_NO_ERR;
+		return 0;
+	}
+	//Find new last block
+	struct block* new_last_block = NULL;
+	if(new_num_blocks > 0){
+		new_last_block = file->block_list;
+	}
+	for(int i = 1; i < new_num_blocks; ++i){
+		new_last_block = new_last_block->next;
+	}
+	//delete rest file
+	struct block* tmp = new_last_block->next;
+	while(tmp){
+		struct block* tmp2 = tmp;
+		tmp = tmp->next;
+		free(tmp2->memory);
+		free(tmp2);
+	}
+	//set new last block
+	file->last_block = new_last_block;
+	file->num_blocks = new_num_blocks;
+	if(new_last_block == NULL){
+		file->block_list = NULL;
+	}else{
+		file->last_block->occupied = new_block_pos;
+		new_last_block->next = NULL;
+	}
+	//find fds with the same file and move position if needed
+	for(int i = 0; i < file_descriptor_capacity; ++i){
+		struct filedesc* filedesc = file_descriptors[i];
+		if(filedesc && (filedesc->file == file)){
+			if(filedesc->block_num >= file->num_blocks){
+				filedesc->block_num = file->num_blocks;
+				filedesc->curr_block = file->last_block;
+				if(filedesc->curr_block == NULL){
+					filedesc->block_pos = 0;
+				}else{
+					filedesc->block_pos = file->last_block->occupied;
+				}
+			}
+		}
+	}
+	ufs_errcode = UFS_ERR_NO_ERR;
+	return 0;
 }
